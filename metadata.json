@@ -1,0 +1,6 @@
+{
+  "name": "Dany Clean Pro — Calculadora de Orçamento",
+  "description": "Calculadora de orçamento residencial com análise visual de fotos por IA, tabela editável em dólares e histórico de leads para a Dany Clean Pro.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
