@@ -257,16 +257,18 @@ export const LeadInputLayer: React.FC<LeadInputLayerProps> = ({
   };
 
   return (
-    <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5 sm:space-y-6">
+    <section className="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] space-y-5 sm:space-y-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-100 pb-4">
         <div>
-          <span className="text-xs font-medium text-[#0B6273]">Camada 1</span>
-          <h2 className="text-lg font-semibold text-slate-900">
-            Entrada do lead e detalhes do imóvel
+          <h2 className="text-base font-semibold text-slate-900">
+            01. Dados do lead e detalhes do imóvel
           </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Preencha o cliente, serviço, tamanho da casa, extras e fotos.
+          </p>
         </div>
-        <span className="text-xs text-slate-500">
-          {photos.length}/8 fotos anexadas
+        <span className="text-xs text-slate-500 font-mono tabular-nums">
+          {photos.length}/8 fotos
         </span>
       </div>
 

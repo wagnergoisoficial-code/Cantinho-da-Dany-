@@ -35,6 +35,7 @@ interface CalendarViewProps {
   selectedCalendarId: string;
   events: GoogleCalendarEvent[];
   onSignIn: () => void;
+  onSignInFallback?: () => void;
   onLogout: () => void;
   onSelectCalendar: (calendarId: string) => void;
   onRefresh: () => void;
@@ -70,6 +71,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   selectedCalendarId,
   events,
   onSignIn,
+  onSignInFallback,
   onLogout,
   onSelectCalendar,
   onRefresh,
@@ -160,7 +162,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   if (!connected) {
     return (
-      <section className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 max-w-2xl mx-auto space-y-5">
+      <section className="bg-white border border-slate-200/90 shadow-[0_1px_2px_rgba(15,23,42,0.04)] rounded-2xl p-6 sm:p-8 max-w-2xl mx-auto space-y-5">
         <div className="flex items-start gap-3">
           <div className="w-11 h-11 rounded-xl bg-[#EAF4F6] text-[#0B6273] flex items-center justify-center shrink-0">
             <Calendar className="w-5 h-5" />
@@ -177,6 +179,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               ) para consultar seus horários reais, ver quantas limpezas já estão
               marcadas em cada dia e agendar novos clientes direto do aplicativo.
             </p>
+            <p className="text-xs text-slate-500">
+              A conexão da agenda é feita diretamente pelo Google sem encerrar sua sessão atual no aplicativo.
+            </p>
             <p className="text-sm text-slate-600 leading-relaxed">
               Depois de conectar, aparecem aqui os{' '}
               <strong className="text-slate-800">lembretes de hoje e amanhã</strong>{' '}
@@ -192,12 +197,22 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </div>
         )}
 
-        <div className="pt-1">
+        <div className="pt-1 flex flex-wrap items-center gap-3">
           <GoogleSignInButton
             onClick={onSignIn}
             disabled={isLoggingIn}
             label={isLoggingIn ? 'Conectando...' : 'Sign in with Google'}
           />
+          {error && onSignInFallback && (
+            <button
+              type="button"
+              onClick={onSignInFallback}
+              disabled={isLoggingIn}
+              className="h-11 px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+            >
+              Tentar conexão alternativa
+            </button>
+          )}
         </div>
 
         <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
@@ -221,7 +236,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Cabeçalho conectado */}
-      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 flex flex-wrap items-center justify-between gap-4">
+      <section className="bg-white border border-slate-200/90 shadow-[0_1px_2px_rgba(15,23,42,0.04)] rounded-2xl p-4 sm:p-6 flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-1">
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Calendar className="w-5 h-5 text-[#0B6273]" />
@@ -313,7 +328,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">
         {/* Lista de compromissos próximos */}
-        <section className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
+        <section className="lg:col-span-2 bg-white border border-slate-200/90 shadow-[0_1px_2px_rgba(15,23,42,0.04)] rounded-2xl p-4 sm:p-6 space-y-4">
           <div className="border-b border-slate-100 pb-3 flex items-center justify-between gap-2">
             <div>
               <h3 className="text-base font-semibold text-slate-900">
@@ -403,7 +418,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         </section>
 
         {/* Formulário de novo agendamento */}
-        <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
+        <section className="bg-white border border-slate-200/90 shadow-[0_1px_2px_rgba(15,23,42,0.04)] rounded-2xl p-4 sm:p-6 space-y-4">
           <div className="border-b border-slate-100 pb-3">
             <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2">
               <CalendarPlus className="w-4 h-4 text-[#0B6273]" />

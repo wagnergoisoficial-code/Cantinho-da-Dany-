@@ -376,10 +376,76 @@ export function validateSimplePunctuation(text: string): string[] {
   return issues;
 }
 
-export function validateNegotiationCompliance(englishMessage: string): {
+const UNAPPROVED_PROMISE_REGEXES: RegExp[] = [
+  /\b(?:within|in|up\s+to)\s+24\s*h(?:ours?)?\b|\b24[-\s]?hour\s+(?:guarantee|warranty|re-?clean|reclean|return|touch[-\s]?up)\b/i,
+  /\b(?:(?:come|go|head|swing)\s+back|return)\b[^.!?\n]{0,80}\b(?:fix|correct|redo|re-?clean|reclean|touch\s*up|no\s+(?:extra\s+)?(?:charge|cost)|at\s+no\s+cost|for\s+free|free\s+of\s+charge|without\s+charg(?:e|ing))\b/i,
+  /\b(?:fix|correct|redo|re-?clean|reclean|touch\s*up)\b[^.!?\n]{0,70}\b(?:no\s+(?:extra\s+)?(?:charge|cost)|at\s+no\s+cost|for\s+free|free\s+of\s+charge|without\s+charg(?:e|ing))\b/i,
+  /\b(?:no\s+(?:extra\s+)?(?:charge|cost)|at\s+no\s+cost|for\s+free|free\s+of\s+charge|without\s+charg(?:e|ing))\b[^.!?\n]{0,70}\b(?:come\s+back|return|fix|correct|redo|re-?clean|reclean|touch\s*up)\b/i,
+  /\bfree\s+(?:re-?clean|reclean|touch[-\s]?up|return(?:\s+visit)?)\b/i,
+  /\b(?:satisfaction|service|cleaning|re-?clean|quality|money[-\s]?back)\s+guarantee\b/i,
+  /\bsatisfaction\s+guaranteed\b/i,
+  /\b(?:(?:em\s+)?at[eé]|em|dentro\s+de)\s+24\s*h(?:oras?)?\b|\bgarantia\s+de\s+24\s*h(?:oras?)?\b/i,
+  /\b(?:volt(?:ar|o|amos|aremos)|retorn(?:ar|o|amos|aremos))\b[^.!?\n]{0,80}\b(?:corrigir|arrumar|refazer|sem\s+custo|sem\s+cobrar|nada\s+a\s+mais|gratuit\w*|gr[aá]tis)\b/i,
+  /\b(?:corrigir|arrumar|refazer|re-?limp\w*)\b[^.!?\n]{0,70}\b(?:sem\s+custo|sem\s+cobrar|nada\s+a\s+mais|gratuit\w*|gr[aá]tis)\b/i,
+  /\b(?:sem\s+custo|sem\s+cobrar|gratuit\w*|gr[aá]tis)\b[^.!?\n]{0,70}\b(?:volt(?:ar|o|amos|aremos)|retorn(?:ar|o|amos|aremos)|corrigir|arrumar|refazer|re-?limp\w*)\b/i,
+  /\b(?:re-?limpeza|retorno)\s+(?:gratuit[ao]|gr[aá]tis|sem\s+custo)\b/i,
+  /\bgarantia\s+(?:de\s+satisfa[cç][aã]o|de\s+24\s*h(?:oras?)?|do\s+servi[cç]o|de\s+qualidade|de\s+re-?limpeza)\b/i,
+];
+
+export function findUnapprovedPromiseViolations(text: string): string[] {
+  if (!text.trim()) return [];
+  if (UNAPPROVED_PROMISE_REGEXES.some((rx) => rx.test(text))) {
+    return [
+      'Contém promessa não aprovada de retorno sem custo / garantia de 24h. Remova antes de enviar.',
+    ];
+  }
+  return [];
+}
+
+const UNVERIFIED_AVAILABILITY_REGEXES: RegExp[] = [
+  /\b(?:i\s+have\s+(?:an?\s+)?openings?|we\s+have\s+(?:an?\s+)?openings?|i['’]?m\s+(?:free|available)\s+(?:on|at|this|next)|i\s+am\s+(?:free|available)\s+(?:on|at|this|next)|we\s+(?:are|['’]re)\s+(?:free|available)\s+(?:on|at|this|next)|(?:spot|slot|time|day)s?\s+(?:is|are)\s+(?:open|available|free)|(?:spot|slot|opening)\s+available|opening\s+(?:on|at|is\s+available))\b/i,
+  /\b(?:tenho\s+(?:um\s+)?hor[aá]rios?\s+(?:dispon[ií]ve(?:l|is)|livres?)|temos\s+(?:um\s+)?hor[aá]rios?\s+(?:dispon[ií]ve(?:l|is)|livres?)|hor[aá]rios?\s+(?:dispon[ií]ve(?:l|is)|livres?)|tenho\s+vagas?|temos\s+vagas?|vagas?\s+dispon[ií]ve(?:l|is)|estou\s+(?:dispon[ií]vel|livre)\s+(?:em|na|no|para)|estamos\s+(?:dispon[ií]veis|livres)\s+(?:em|na|no|para))\b/i,
+];
+
+export function findUnverifiedAvailabilityViolations(
+  text: string,
+  calendarVerified: boolean
+): string[] {
+  if (calendarVerified || !text.trim()) return [];
+  if (UNVERIFIED_AVAILABILITY_REGEXES.some((rx) => rx.test(text))) {
+    return [
+      'Afirma vaga/horário disponível sem data e hora verificadas como livres no Google Calendar conectado.',
+    ];
+  }
+  return [];
+}
+
+export interface ComplianceValidationOptions {
+  calendarVerified?: boolean;
+}
+
+export function validatePortugueseCompliance(
+  portugueseMessage: string,
+  options: ComplianceValidationOptions = {}
+): string[] {
+  const calendarVerified = Boolean(options.calendarVerified);
+  return Array.from(
+    new Set([
+      ...validateSimplePunctuation(portugueseMessage),
+      ...findUnapprovedPromiseViolations(portugueseMessage),
+      ...findUnverifiedAvailabilityViolations(portugueseMessage, calendarVerified),
+    ])
+  );
+}
+
+export function validateNegotiationCompliance(
+  englishMessage: string,
+  options: ComplianceValidationOptions = {}
+): {
   wordCount: number;
   violations: string[];
 } {
+  const calendarVerified = Boolean(options.calendarVerified);
   const wordCount = countWords(englishMessage);
   const violations: string[] = [];
 
@@ -388,6 +454,10 @@ export function validateNegotiationCompliance(englishMessage: string): {
   }
 
   violations.push(...validateSimplePunctuation(englishMessage));
+  violations.push(...findUnapprovedPromiseViolations(englishMessage));
+  violations.push(
+    ...findUnverifiedAvailabilityViolations(englishMessage, calendarVerified)
+  );
 
   const questionCount = (englishMessage.match(/\?/g) || []).length;
   if (questionCount > 1) {
@@ -435,14 +505,19 @@ export function validateNegotiationCompliance(englishMessage: string): {
   }
 
   if (/\bwe\s+have\s+openings?\b/i.test(englishMessage)) {
-    violations.push('Use primeira pessoa ("I have an opening"), nunca "We have openings".');
+    violations.push('Nunca escreva "We have openings".');
   }
 
-  if (/\b(?:which|what)\s+day\s+works\s+best\b/i.test(englishMessage)) {
-    violations.push('Proibido pergunta aberta de dia. Termine com duas datas específicas e "Which works better for you?".');
+  if (
+    calendarVerified &&
+    /\b(?:which|what)\s+day\s+works\s+best\b/i.test(englishMessage)
+  ) {
+    violations.push(
+      'Com horários verificados na agenda, feche com os horários confirmados e "Which works better for you?".'
+    );
   }
 
-  return { wordCount, violations };
+  return { wordCount, violations: Array.from(new Set(violations)) };
 }
 
 export interface ObjectionAnalyticsRow {

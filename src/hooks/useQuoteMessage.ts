@@ -6,8 +6,9 @@ import {
 import { buildQuoteMessages, countWords } from '../utils/messageBuilder';
 import {
   validateNegotiationCompliance,
-  validateSimplePunctuation,
+  validatePortugueseCompliance,
 } from '../utils/negotiationEngine';
+import { CalendarAvailabilityResult } from '../utils/googleCalendarApi';
 
 interface UseQuoteMessageArgs {
   input: LeadInputState;
@@ -17,6 +18,8 @@ interface UseQuoteMessageArgs {
   deepCleanRangeMarginPercent: number;
   servedCities: string[];
   cityFixedDays: CityFixedDayRule[];
+  /** Horários conferidos na agenda do Google (só a Camada 4 usa). */
+  calendarAvailability?: CalendarAvailabilityResult | null;
 }
 
 /**
@@ -32,6 +35,7 @@ export function useQuoteMessage({
   deepCleanRangeMarginPercent,
   servedCities,
   cityFixedDays,
+  calendarAvailability = null,
 }: UseQuoteMessageArgs) {
   const missingName = !input.clientName.trim();
   const missingOrigin = !input.origin;
@@ -45,14 +49,20 @@ export function useQuoteMessage({
     deepCleanRangeMarginPercent,
     servedCities,
     new Date(),
-    cityFixedDays
+    cityFixedDays,
+    calendarAvailability
   );
 
+  const calendarVerified = Boolean(calendarAvailability?.verifiedAvailable);
   const wordCount = countWords(english);
-  const compliance = validateNegotiationCompliance(english);
-  const ptPunctuationIssues = validateSimplePunctuation(portuguese);
+  const compliance = validateNegotiationCompliance(english, {
+    calendarVerified,
+  });
+  const ptIssues = validatePortugueseCompliance(portuguese, {
+    calendarVerified,
+  });
   const allViolations = Array.from(
-    new Set([...compliance.violations, ...ptPunctuationIssues])
+    new Set([...compliance.violations, ...ptIssues])
   );
 
   const missingFieldAlerts: string[] = [];
@@ -64,6 +74,7 @@ export function useQuoteMessage({
     missingName || missingOrigin || missingCity || allViolations.length > 0;
 
   return {
+    calendarVerified,
     english,
     portuguese,
     wordCount,

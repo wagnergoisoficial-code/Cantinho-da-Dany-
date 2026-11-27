@@ -23,6 +23,10 @@ export const PRICING_STORAGE_KEY = 'dany_clean_pro_pricing_v4';
 export const HISTORY_STORAGE_KEY = 'dany_clean_pro_history_v4';
 export const HELPERS_STORAGE_KEY = 'dany_clean_pro_helpers_v1';
 export const LAST_BACKUP_STORAGE_KEY = 'dany_clean_pro_last_backup_v1';
+export const PRE_FIRESTORE_BACKUP_STORAGE_KEY =
+  'dany_clean_pro_pre_firestore_backup_v1';
+export const FIRESTORE_MIGRATION_STATE_KEY =
+  'dany_clean_pro_firestore_migration_v1';
 
 export const MIGRATABLE_PRICING_STORAGE_KEY_V3 = 'dany_clean_pro_pricing_v3';
 export const MIGRATABLE_HISTORY_STORAGE_KEY_V3 = 'dany_clean_pro_history_v3';
@@ -57,7 +61,7 @@ export const DEFAULT_CITY_FIXED_DAYS: CityFixedDayRule[] = [
 export const DEFAULT_COMPANY_FACTS = [
   'Serviços: limpeza residencial recorrente (weekly, every other week, monthly), primeira limpeza, deep cleaning, move-in/move-out (casa vazia), Airbnb entre hóspedes, escritório e pequena loja, pós-obra, organização (sob orçamento). Extras: forno, geladeira e armários por dentro, janelas por dentro, roupa de cama. NÃO fazemos limpeza industrial.',
   'A limpeza regular inclui: tirar pó, aspirar e passar pano no chão, banheiros (vaso, pia, box, espelho), cozinha (bancada, pia, fogão por cima, eletrodomésticos por fora), micro-ondas por dentro, arrumar camas e tirar o lixo.',
-  'Políticas: pagamento no dia, depois da limpeza, por Zelle, Venmo ou dinheiro. Se a cliente avisar em até 24h que algo não ficou bom, voltamos para corrigir sem custo. Cancelamento ou reagendamento sem custo com 3 dias de antecedência; cancelamento com menos de 3 dias tem taxa de $60. Levamos produtos e equipamentos. Pets sem problema (não recolhemos fezes). Aceitamos chave ou código da porta. Avisamos ao chegar e ao terminar. Mais de 2.000 limpezas em Connecticut.',
+  'Políticas: pagamento no dia, depois da limpeza, por Zelle, Venmo ou dinheiro. Cancelamento ou reagendamento sem custo com 3 dias de antecedência; cancelamento com menos de 3 dias tem taxa de $60. Levamos produtos e equipamentos. Pets sem problema (não recolhemos fezes). Aceitamos chave ou código da porta. Avisamos ao chegar e ao terminar. Mais de 2.000 limpezas em Connecticut.',
 ].join('\n');
 
 export const DEFAULT_PRICING_CONFIG: PricingConfig = {
@@ -321,7 +325,7 @@ export const OBJECTION_OPTIONS: ObjectionMeta[] = [
     id: 'caro',
     label: 'Está caro',
     strategyHint:
-      'Não baixe preço de cara; mostre o que está incluso, a garantia e ofereça um extra de valor.',
+      'Não baixe preço de cara; mostre o que está incluso, que só paga depois da limpeza e ofereça um extra de valor.',
   },
   {
     id: 'marido_esposa',
@@ -411,7 +415,7 @@ export const FOLLOW_UP_STEPS_INFO: {
   {
     step: 2,
     title: 'Dia 2',
-    subtitle: 'Garantia ("you only pay after you see it clean")',
+    subtitle: 'Pagamento após ver limpo ("you only pay after you see it clean")',
   },
   {
     step: 5,

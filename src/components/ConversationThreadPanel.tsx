@@ -26,6 +26,7 @@ import {
 } from '../types/pricing';
 import { apiFetch } from '../utils/apiClient';
 import { resolveDateOptionsForCity } from '../utils/dateOptions';
+import { CalendarAvailabilityResult } from '../utils/googleCalendarApi';
 import { isCityInServedList } from '../utils/messageBuilder';
 import {
   checkNameMismatch,
@@ -34,12 +35,18 @@ import {
   getLocalDateString,
   getNextFollowUpAfterStep,
   validateNegotiationCompliance,
-  validateSimplePunctuation,
+  validatePortugueseCompliance,
 } from '../utils/negotiationEngine';
+import {
+  ResolvedLeadPricing,
+  resolveLeadPricingFromEngine,
+} from '../utils/pricingEngine';
 
 interface ConversationThreadPanelProps {
   lead: LeadQuoteRecord;
   config: PricingConfig;
+  resolvedPricing?: ResolvedLeadPricing;
+  calendarAvailability?: CalendarAvailabilityResult | null;
   existingClientConcession: ConcessionRecord | null;
   idealPrice: number;
   competitivePrice: number;
@@ -63,6 +70,8 @@ function formatMessageTime(iso: string): string {
 export const ConversationThreadPanel: React.FC<ConversationThreadPanelProps> = ({
   lead,
   config,
+  resolvedPricing,
+  calendarAvailability,
   existingClientConcession,
   idealPrice,
   competitivePrice,
@@ -73,6 +82,11 @@ export const ConversationThreadPanel: React.FC<ConversationThreadPanelProps> = (
 }) => {
   const today = getLocalDateString();
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  const pricing = useMemo(
+    () => resolvedPricing ?? resolveLeadPricingFromEngine(lead, config),
+    [resolvedPricing, lead, config]
+  );
+  const calendarVerified = Boolean(calendarAvailability?.verifiedAvailable);
 
   const [copilotClientInput, setCopilotClientInput] = useState('');
   const [copilotResult, setCopilotResult] =
@@ -159,10 +173,14 @@ export const ConversationThreadPanel: React.FC<ConversationThreadPanelProps> = (
   );
 
   const copilotNameCheck = checkNameMismatch(lead.clientName, copilotReplyEn);
-  const copilotCompliance = validateNegotiationCompliance(copilotReplyEn);
-  const copilotPtPunctuationIssues = validateSimplePunctuation(copilotReplyPt);
+  const copilotCompliance = validateNegotiationCompliance(copilotReplyEn, {
+    calendarVerified,
+  });
+  const copilotPtIssues = validatePortugueseCompliance(copilotReplyPt, {
+    calendarVerified,
+  });
   const allCopilotViolations = Array.from(
-    new Set([...copilotCompliance.violations, ...copilotPtPunctuationIssues])
+    new Set([...copilotCompliance.violations, ...copilotPtIssues])
   );
   const copilotCopyBlocked =
     !copilotReplyEn.trim() || allCopilotViolations.length > 0;
@@ -204,16 +222,26 @@ export const ConversationThreadPanel: React.FC<ConversationThreadPanelProps> = (
           cityWeekdayForProof: resolvedDates.proofWeekdayEn,
           dayOption1: resolvedDates.dates[0].en,
           dayOption2: resolvedDates.dates[1].en,
+          calendarVerified,
+          verifiedSlotsEn: calendarVerified
+            ? calendarAvailability?.verifiedSlots.map((s) => s.en) ?? []
+            : [],
+          verifiedSlotsPt: calendarVerified
+            ? calendarAvailability?.verifiedSlots.map((s) => s.pt) ?? []
+            : [],
           companyFacts: config.companyFacts,
           houseLabel: lead.effectiveHouseLabel || lead.houseLabel,
           serviceType: SERVICE_TYPE_LABELS[lead.serviceType],
+          isRecurring: pricing.isRecurring,
           frequency: lead.frequency ? FREQUENCY_LABELS[lead.frequency] : null,
           desiredDate: lead.desiredDate,
           notes: lead.notes,
           stage: lead.stage,
           followUpStep: lead.followUpStep,
           priceAlreadySent: lead.priceAlreadySent,
-          finalPricePrimary: lead.finalPricePrimary,
+          finalPricePrimary: pricing.initialFinalPrice,
+          finalPriceRecurring: pricing.recurringFinalPrice,
+          recurringPriceStatus: pricing.recurringStatus,
           idealPrice,
           competitivePrice,
           minimumPrice,
@@ -435,7 +463,7 @@ export const ConversationThreadPanel: React.FC<ConversationThreadPanelProps> = (
             descontos.
           </p>
         </div>
-        <div className="text-xs text-slate-600 font-mono tabular-nums whitespace-nowrap">
+        <div className="text-xs text-slate-600 font-mono tabular-nums flex flex-wrap items-center gap-y-1">
           <span>
             {chronologicalTurns.length}{' '}
             {chronologicalTurns.length === 1 ? 'turno' : 'turnos'}
@@ -443,7 +471,21 @@ export const ConversationThreadPanel: React.FC<ConversationThreadPanelProps> = (
           <span className="mx-1.5 text-slate-300" aria-hidden="true">
             ·
           </span>
-          <span>Preço ${lead.finalPricePrimary}</span>
+          <span>Inicial ${pricing.initialFinalPrice}</span>
+          {pricing.isRecurring && (
+            <>
+              <span className="mx-1.5 text-slate-300" aria-hidden="true">
+                ·
+              </span>
+              <span>
+                Recorrente:{' '}
+                {pricing.recurringStatus === 'available' &&
+                pricing.recurringFinalPrice !== null
+                  ? `$${pricing.recurringFinalPrice}/visita`
+                  : 'a confirmar'}
+              </span>
+            </>
+          )}
           <span className="mx-1.5 text-slate-300" aria-hidden="true">
             ·
           </span>
@@ -575,9 +617,29 @@ export const ConversationThreadPanel: React.FC<ConversationThreadPanelProps> = (
             Cole aqui a mensagem da cliente (em inglês)
           </label>
           <span className="text-xs text-slate-500">
-            Datas sugeridas{resolvedDates.isFixedCityDay ? ` (${lead.city} · ${resolvedDates.fixedWeekdayPt})` : ''}:{' '}
-            <strong className="text-slate-700">{resolvedDates.dates[0].en}</strong> ou{' '}
-            <strong className="text-slate-700">{resolvedDates.dates[1].en}</strong>
+            {calendarVerified && calendarAvailability?.verifiedSlots.length ? (
+              <>
+                Horários livres verificados no Google Calendar:{' '}
+                <strong className="text-slate-700">
+                  {calendarAvailability.verifiedSlots.map((s) => s.en).join(' ou ')}
+                </strong>
+              </>
+            ) : (
+              <>
+                Sugestões de datas (a confirmar na agenda)
+                {resolvedDates.isFixedCityDay
+                  ? ` (${lead.city} · ${resolvedDates.fixedWeekdayPt})`
+                  : ''}
+                :{' '}
+                <strong className="text-slate-700">
+                  {resolvedDates.dates[0].en}
+                </strong>{' '}
+                ou{' '}
+                <strong className="text-slate-700">
+                  {resolvedDates.dates[1].en}
+                </strong>
+              </>
+            )}
           </span>
         </div>
 

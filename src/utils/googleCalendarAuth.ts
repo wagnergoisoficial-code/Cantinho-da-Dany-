@@ -1,204 +1,313 @@
-import { getApp, getApps, initializeApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
   User,
-  browserLocalPersistence,
-  getAuth,
   onAuthStateChanged,
-  reauthenticateWithPopup,
-  setPersistence,
   signInWithPopup,
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { friendlyGoogleAuthError } from './googleCalendarErrors';
+import { auth, isAuthorizedFirebaseUser } from './firebaseClient';
+import {
+  GOOGLE_CALENDAR_SCOPES,
+  clearGoogleCalendarAccessToken,
+  extractGoogleOAuthAccessToken,
+  getGoogleCalendarAccessToken,
+  setGoogleCalendarAccessToken,
+  subscribeGoogleCalendarAccessToken,
+} from './calendarTokenStore';
 
-/**
- * Permissões mínimas que o app realmente usa:
- * - calendar.events: ler, criar, editar e excluir eventos.
- * - calendar.calendarlist.readonly: listar as agendas para escolher qual usar.
- *
- * Antes eram 17 permissões, o que deixava a tela do Google assustadora e
- * dificultava a verificação do app.
- */
-export const GOOGLE_CALENDAR_SCOPES = [
-  'https://www.googleapis.com/auth/calendar.events',
-  'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
-] as const;
+export {
+  GOOGLE_CALENDAR_SCOPES,
+  clearGoogleCalendarAccessToken,
+  getGoogleCalendarAccessToken,
+};
 
 export const DEFAULT_GOOGLE_CALENDAR_EMAIL = 'danycleanenpro@gmail.com';
 
-// Token do Google dura 1 hora. Renovamos 5 minutos antes para não falhar no meio de uma ação.
-const TOKEN_LIFETIME_MS = 55 * 60 * 1000;
-const RENEW_MARGIN_MS = 5 * 60 * 1000;
-const STORAGE_KEY = 'dany_google_calendar_session_v1';
+interface GisTokenResponse {
+  access_token?: string;
+  expires_in?: number | string;
+  scope?: string;
+  token_type?: string;
+  error?: string;
+  error_description?: string;
+}
 
-const firebaseApp =
-  getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
+interface GisTokenClientError {
+  type?: 'popup_failed_to_open' | 'popup_closed' | 'unknown' | string;
+  message?: string;
+}
 
-// Mantém o login do Firebase depois de recarregar a página.
-void setPersistence(auth, browserLocalPersistence).catch(() => {
-  /* navegador sem armazenamento: o login funciona só nesta aba */
-});
+interface GisTokenClient {
+  requestAccessToken: (overrideConfig?: {
+    prompt?: '' | 'none' | 'consent' | 'select_account';
+    hint?: string;
+  }) => void;
+}
 
-function buildProvider(options: { chooseAccount: boolean; email?: string | null }) {
+interface GisOAuth2Namespace {
+  initTokenClient: (config: {
+    client_id: string;
+    scope: string;
+    include_granted_scopes?: boolean;
+    callback: (response: GisTokenResponse) => void;
+    error_callback?: (error: GisTokenClientError) => void;
+  }) => GisTokenClient;
+  revoke?: (accessToken: string, done?: () => void) => void;
+}
+
+declare global {
+  interface Window {
+    google?: {
+      accounts?: {
+        oauth2?: GisOAuth2Namespace;
+      };
+    };
+  }
+}
+
+export interface CalendarSignInResult {
+  accessToken: string;
+  userEmail: string | null;
+  method: 'gis' | 'firebase';
+}
+
+function getGisOAuth2(): GisOAuth2Namespace | null {
+  if (typeof window === 'undefined') return null;
+  return window.google?.accounts?.oauth2 ?? null;
+}
+
+function createCalendarProvider(forceConsent = false): GoogleAuthProvider {
   const provider = new GoogleAuthProvider();
   for (const scope of GOOGLE_CALENDAR_SCOPES) {
     provider.addScope(scope);
   }
-  const params: Record<string, string> = {
-    login_hint: options.email || DEFAULT_GOOGLE_CALENDAR_EMAIL,
+  provider.setCustomParameters({
+    prompt: forceConsent ? 'consent' : 'select_account',
     include_granted_scopes: 'true',
-  };
-  if (options.chooseAccount) {
-    params.prompt = 'select_account';
-  }
-  provider.setCustomParameters(params);
+  });
   return provider;
 }
 
-interface StoredSession {
-  accessToken: string;
-  expiresAt: number;
-  uid: string;
+export function formatCalendarAuthError(error: unknown): string {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code || '')
+      : '';
+  const message = error instanceof Error ? error.message : String(error || '');
+  const combined = `${code} ${message}`;
+
+  if (/popup_failed_to_open|auth\/popup-blocked/i.test(combined)) {
+    return 'O navegador bloqueou a janela do Google. Permita pop-ups para este site (no iPhone: Ajustes > Safari > Bloquear Pop-ups desativado) e toque novamente em "Sign in with Google".';
+  }
+  if (/popup_closed|auth\/popup-closed-by-user/i.test(combined)) {
+    return 'A janela de login do Google foi fechada antes de concluir a conexão da agenda. Tente novamente.';
+  }
+  if (/access_denied/i.test(combined)) {
+    return 'Permissão do Google Calendar recusada. Clique em "Sign in with Google" novamente e aceite o acesso à agenda.';
+  }
+  if (/missing initial state|estado inicial/i.test(combined)) {
+    return 'O Safari bloqueou o estado de sessão da janela do Google. Abra o aplicativo diretamente no Safari (fora de prévia/aba anônima) ou use o botão principal "Sign in with Google".';
+  }
+  if (/auth\/cancelled-popup-request/i.test(combined)) {
+    return 'Já existe uma tentativa de conexão da agenda em andamento. Aguarde ou clique novamente.';
+  }
+  if (/auth\/unauthorized-domain/i.test(combined)) {
+    return 'Este domínio não está autorizado no Firebase Auth para conectar o Google Calendar.';
+  }
+  if (/auth\/operation-not-allowed/i.test(combined)) {
+    return 'O login com Google não está habilitado na configuração do projeto Firebase.';
+  }
+  if (/auth\/network-request-failed/i.test(combined)) {
+    return 'Falha de conexão com o Google. Verifique sua internet e tente novamente.';
+  }
+  if (message) {
+    return message;
+  }
+  return 'Não foi possível conectar ao Google Calendar.';
 }
 
 let isSigningIn = false;
-let session: StoredSession | null = readStoredSession();
 
-function readStoredSession(): StoredSession | null {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredSession;
-    if (!parsed?.accessToken || !parsed?.expiresAt || !parsed?.uid) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function saveSession(next: StoredSession | null) {
-  session = next;
-  try {
-    if (next) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } else {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
-  } catch {
-    /* sem localStorage: o token fica só na memória desta aba */
-  }
-}
-
-function isSessionUsable(s: StoredSession | null, uid?: string): s is StoredSession {
-  if (!s) return false;
-  if (uid && s.uid !== uid) return false;
-  return Date.now() < s.expiresAt - RENEW_MARGIN_MS;
-}
-
-function storeCredentialFrom(result: Awaited<ReturnType<typeof signInWithPopup>>) {
-  const credential = GoogleAuthProvider.credentialFromResult(result);
-  if (!credential?.accessToken) {
-    throw new Error(
-      'O Google não liberou o acesso à agenda. Conecte de novo e deixe marcada a opção do Google Agenda.'
-    );
-  }
-  saveSession({
-    accessToken: credential.accessToken,
-    expiresAt: Date.now() + TOKEN_LIFETIME_MS,
-    uid: result.user.uid,
-  });
-  return credential.accessToken;
-}
-
-/**
- * Observa o login. Ao recarregar a página, se ainda houver um token válido
- * salvo, a agenda reconecta sozinha. Se o token venceu, onNeedsRenewal é
- * chamado: basta um toque em "Conectar" para renovar, sem pedir permissões de novo.
- */
 export function initGoogleCalendarAuth(
-  onAuthSuccess?: (user: User, token: string) => void,
-  onAuthFailure?: () => void,
-  onNeedsRenewal?: (user: User) => void
+  onAuthSuccess?: (user: User, token: string, source: 'auth' | 'token') => void,
+  onAuthFailure?: () => void
 ) {
-  return onAuthStateChanged(auth, (user: User | null) => {
-    if (user) {
-      if (isSessionUsable(session, user.uid)) {
-        onAuthSuccess?.(user, session.accessToken);
+  const emitCurrentState = (
+    user: User | null,
+    source: 'auth' | 'token'
+  ) => {
+    const token = getGoogleCalendarAccessToken();
+    if (user && isAuthorizedFirebaseUser(user)) {
+      if (token) {
+        onAuthSuccess?.(user, token, source);
       } else if (!isSigningIn) {
-        onNeedsRenewal?.(user);
+        onAuthFailure?.();
       }
-    } else {
-      saveSession(null);
+    } else if (!isSigningIn) {
+      clearGoogleCalendarAccessToken();
+      onAuthFailure?.();
+    }
+  };
+
+  const unsubscribeAuth = onAuthStateChanged(auth, (user: User | null) => {
+    emitCurrentState(user, 'auth');
+  });
+
+  const unsubscribeToken = subscribeGoogleCalendarAccessToken((token) => {
+    if (isSigningIn) return;
+    if (token && auth.currentUser && isAuthorizedFirebaseUser(auth.currentUser)) {
+      onAuthSuccess?.(auth.currentUser, token, 'token');
+    } else if (!token) {
       onAuthFailure?.();
     }
   });
+
+  return () => {
+    unsubscribeAuth();
+    unsubscribeToken();
+  };
 }
 
-export async function googleCalendarSignIn(): Promise<{
-  user: User;
-  accessToken: string;
-}> {
-  isSigningIn = true;
+/**
+ * Conecta diretamente via Google Identity Services (OAuth 2.0 Token Client).
+ * Evita o handler cross-origin firebaseapp.com/__/auth/handler que falha no
+ * Safari do iPhone com "falta do estado inicial" (storage particionado / ITP),
+ * e não altera a sessão principal do Firebase Auth nem do Firestore.
+ *
+ * IMPORTANTE: A chamada a requestAccessToken() acontece de forma 100% síncrona
+ * dentro do clique do usuário para que o Safari iOS não bloqueie o pop-up.
+ */
+function requestTokenViaGis(
+  forceConsent = false
+): Promise<CalendarSignInResult> | null {
+  const oauth2 = getGisOAuth2();
+  const clientId = (firebaseConfig.oAuthClientId || '').trim();
+  if (!oauth2 || !clientId) {
+    return null;
+  }
+
+  return new Promise<CalendarSignInResult>((resolve, reject) => {
+    let settled = false;
+    const finishResolve = (val: CalendarSignInResult) => {
+      if (settled) return;
+      settled = true;
+      isSigningIn = false;
+      resolve(val);
+    };
+    const finishReject = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      isSigningIn = false;
+      reject(new Error(formatCalendarAuthError(err)));
+    };
+
+    try {
+      isSigningIn = true;
+      const tokenClient = oauth2.initTokenClient({
+        client_id: clientId,
+        scope: GOOGLE_CALENDAR_SCOPES.join(' '),
+        include_granted_scopes: true,
+        callback: (response: GisTokenResponse) => {
+          if (response.error) {
+            finishReject(
+              new Error(
+                response.error_description ||
+                  response.error ||
+                  'access_denied'
+              )
+            );
+            return;
+          }
+
+          const token = (response.access_token || '').trim();
+          if (!token) {
+            finishReject(
+              new Error(
+                'Não foi possível obter a permissão do Google Calendar. Tente novamente e aceite o acesso à agenda.'
+              )
+            );
+            return;
+          }
+
+          setGoogleCalendarAccessToken(token);
+          finishResolve({
+            accessToken: token,
+            userEmail: auth.currentUser?.email || null,
+            method: 'gis',
+          });
+        },
+        error_callback: (err: GisTokenClientError) => {
+          finishReject(new Error(err?.type || err?.message || 'popup_closed'));
+        },
+      });
+
+      // Chamada síncrona imediata dentro do gesto do usuário (essencial no Safari iOS).
+      tokenClient.requestAccessToken({
+        prompt: forceConsent ? 'consent' : 'select_account',
+      });
+    } catch (err) {
+      finishReject(err);
+    }
+  });
+}
+
+/**
+ * Fluxo alternativo via Firebase Auth signInWithPopup (caso GIS não carregue
+ * ou o domínio não esteja na lista de origens JS do OAuth client).
+ */
+export async function googleCalendarSignInViaFirebase(
+  forceConsent = false
+): Promise<CalendarSignInResult> {
   try {
-    const current = auth.currentUser;
-    // Já logado antes: só renova, sem pedir para escolher conta de novo.
-    const result = current
-      ? await reauthenticateWithPopup(
-          current,
-          buildProvider({ chooseAccount: false, email: current.email })
-        )
-      : await signInWithPopup(auth, buildProvider({ chooseAccount: true }));
-    const accessToken = storeCredentialFrom(result);
-    return { user: result.user, accessToken };
+    isSigningIn = true;
+    const provider = createCalendarProvider(forceConsent);
+    const result = await signInWithPopup(auth, provider);
+    if (!isAuthorizedFirebaseUser(result.user)) {
+      clearGoogleCalendarAccessToken();
+      await auth.signOut().catch(() => undefined);
+      throw new Error(
+        `A conta ${result.user?.email || ''} não está autorizada. Conecte a agenda usando uma conta autorizada do Dany Clean Pro.`
+      );
+    }
+
+    const accessToken = extractGoogleOAuthAccessToken(result);
+    if (!accessToken) {
+      throw new Error(
+        'Não foi possível obter a permissão do Google Calendar. Clique em "Sign in with Google" novamente e marque todas as permissões da agenda.'
+      );
+    }
+
+    setGoogleCalendarAccessToken(accessToken);
+    return {
+      accessToken,
+      userEmail: result.user.email || result.user.displayName || null,
+      method: 'firebase',
+    };
   } catch (error) {
-    console.error('Google Calendar sign in error:', error);
-    throw friendlyGoogleAuthError(error);
+    console.error('Google Calendar Firebase sign in error:', error);
+    throw new Error(formatCalendarAuthError(error));
   } finally {
     isSigningIn = false;
   }
 }
 
-/** Renova o token (janela rápida do Google que fecha sozinha). Use a partir de um clique. */
-export async function renewGoogleCalendarAccessToken(): Promise<string> {
-  const { accessToken } = await googleCalendarSignIn();
-  return accessToken;
-}
-
 /**
- * Devolve um token válido. Se estiver perto de vencer e `interactive` for true,
- * renova automaticamente antes de continuar.
+ * Fluxo principal de conexão do Google Calendar:
+ * Usa GIS diretamente (síncrono no toque/clique — imune ao erro "falta do estado inicial"
+ * do Safari iOS), com fallback automático para Firebase Auth se o script GIS não estiver pronto.
  */
-export async function getFreshGoogleCalendarAccessToken(
-  interactive = true
-): Promise<string | null> {
-  const uid = auth.currentUser?.uid;
-  if (isSessionUsable(session, uid)) return session.accessToken;
-  if (!interactive || !auth.currentUser) return null;
-  return renewGoogleCalendarAccessToken();
+export function googleCalendarSignIn(
+  options: { forceConsent?: boolean } = {}
+): Promise<CalendarSignInResult> {
+  const gisPromise = requestTokenViaGis(Boolean(options.forceConsent));
+  if (gisPromise) {
+    return gisPromise;
+  }
+  return googleCalendarSignInViaFirebase(Boolean(options.forceConsent));
 }
 
-/** Momento (ms) em que o token atual precisa ser renovado, ou null. */
-export function getGoogleCalendarTokenRenewAt(): number | null {
-  return session ? session.expiresAt - RENEW_MARGIN_MS : null;
-}
-
-export function hasGoogleCalendarAccount(): boolean {
-  return Boolean(auth.currentUser);
-}
-
-export function getGoogleCalendarAccessToken(): string | null {
-  return isSessionUsable(session, auth.currentUser?.uid)
-    ? session.accessToken
-    : null;
-}
-
-export function clearGoogleCalendarAccessToken(): void {
-  saveSession(null);
-}
-
+// Desconectar a agenda remove apenas o token OAuth do Calendar em memória,
+// mantendo a sessão principal do aplicativo intacta.
 export async function googleCalendarLogout(): Promise<void> {
-  saveSession(null);
-  await auth.signOut();
+  clearGoogleCalendarAccessToken();
 }

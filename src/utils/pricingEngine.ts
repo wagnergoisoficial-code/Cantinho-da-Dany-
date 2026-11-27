@@ -3,12 +3,14 @@ import {
   HouseCondition,
   HouseTier,
   LeadInputState,
+  LeadQuoteRecord,
   PetsOption,
   PriceCalculationResult,
   PricingConfig,
 } from '../types/pricing';
 import {
   FREQUENCY_LABELS,
+  INITIAL_LEAD_STATE,
   VISITA_AVULSA_LABELS,
 } from '../data/defaultPricing';
 
@@ -436,3 +438,321 @@ export function calculateQuote(
     recurringBreakdown: [],
   };
 }
+
+export type RecurringPriceStatus =
+  | 'not_applicable'
+  | 'confirmed'
+  | 'derived'
+  | 'needs_confirmation';
+
+export interface LeadPricingResolution {
+  isRecurring: boolean;
+  initialPrice: number;
+  tableInitialPrice: number;
+  recurringPrice: number | null;
+  tableRecurringPrice: number | null;
+  recurringStatus: RecurringPriceStatus;
+  frequencyLabelPt: string | null;
+  biweeklyTablePrice: number | null;
+}
+
+function normalizeLabelKey(raw: string | null | undefined): string {
+  return (raw || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+export function findMatchingTierForLead(
+  houseLabel: string | null | undefined,
+  tiers: HouseTier[]
+): HouseTier | null {
+  const target = normalizeLabelKey(houseLabel);
+  if (!target || tiers.length === 0) return null;
+
+  const exact = tiers.find(
+    (t) =>
+      normalizeLabelKey(t.label) === target ||
+      normalizeLabelKey(t.id) === target
+  );
+  if (exact) return exact;
+
+  const roomMatch = target.match(/(\d+)\s*quartos?\D+(\d+)\s*(?:\+\s*)?banheiros?/);
+  if (roomMatch) {
+    const q = Number(roomMatch[1]);
+    const b = Number(roomMatch[2]);
+    const tierId = mapRoomsToTierId(
+      Number.isFinite(q) ? q : null,
+      Number.isFinite(b) ? b : null,
+      tiers
+    );
+    if (tierId) {
+      return tiers.find((t) => t.id === tierId) ?? null;
+    }
+  }
+
+  return null;
+}
+
+export function resolveLeadPricingSummary(
+  lead: Pick<
+    LeadQuoteRecord,
+    | 'serviceType'
+    | 'frequency'
+    | 'houseLabel'
+    | 'effectiveHouseLabel'
+    | 'squareFeet'
+    | 'houseCondition'
+    | 'petsOption'
+    | 'tablePricePrimary'
+    | 'finalPricePrimary'
+    | 'tablePriceRecurring'
+    | 'finalPriceRecurring'
+    | 'promoPercent'
+    | 'promoName'
+  >,
+  config: PricingConfig
+): LeadPricingResolution {
+  const initialPrice = Math.max(0, Number(lead.finalPricePrimary) || 0);
+  const tableInitialPrice = Math.max(
+    0,
+    Number(lead.tablePricePrimary) || initialPrice
+  );
+
+  if (lead.serviceType !== 'recorrente') {
+    return {
+      isRecurring: false,
+      initialPrice,
+      tableInitialPrice,
+      recurringPrice: null,
+      tableRecurringPrice: null,
+      recurringStatus: 'not_applicable',
+      frequencyLabelPt: null,
+      biweeklyTablePrice: null,
+    };
+  }
+
+  const validFrequency =
+    lead.frequency === 'semanal' ||
+    lead.frequency === 'quinzenal' ||
+    lead.frequency === 'mensal'
+      ? lead.frequency
+      : null;
+
+  const frequencyLabelPt = validFrequency
+    ? FREQUENCY_LABELS[validFrequency]
+    : null;
+
+  const matchedEffectiveTier = findMatchingTierForLead(
+    lead.effectiveHouseLabel,
+    config.tiers
+  );
+  const matchedBaseTier = matchedEffectiveTier
+    ? null
+    : findMatchingTierForLead(lead.houseLabel, config.tiers);
+  const matchedTier = matchedEffectiveTier ?? matchedBaseTier;
+
+  const hasSufficientData = Boolean(
+    validFrequency &&
+      matchedTier &&
+      lead.houseCondition !== null &&
+      lead.petsOption !== null
+  );
+
+  const derivedCalc =
+    hasSufficientData && validFrequency && matchedTier
+      ? calculateQuote(
+          {
+            ...INITIAL_LEAD_STATE,
+            squareFeet: matchedEffectiveTier
+              ? ''
+              : typeof lead.squareFeet === 'number' &&
+                Number.isFinite(lead.squareFeet)
+              ? String(lead.squareFeet)
+              : '',
+            selectedTierId: matchedTier.id,
+            serviceType: 'recorrente',
+            frequency: validFrequency,
+            houseCondition: lead.houseCondition!,
+            petsOption: lead.petsOption!,
+            promoPercent:
+              typeof lead.promoPercent === 'number' && lead.promoPercent > 0
+                ? String(lead.promoPercent)
+                : '',
+            promoName: lead.promoName || '',
+            dayOption1: config.defaultDayOption1 || 'Tuesday',
+            dayOption2: config.defaultDayOption2 || 'Thursday',
+          },
+          config
+        )
+      : null;
+
+  const referenceCalc =
+    derivedCalc ??
+    (matchedTier && validFrequency
+      ? calculateQuote(
+          {
+            ...INITIAL_LEAD_STATE,
+            squareFeet: matchedEffectiveTier
+              ? ''
+              : typeof lead.squareFeet === 'number' &&
+                Number.isFinite(lead.squareFeet)
+              ? String(lead.squareFeet)
+              : '',
+            selectedTierId: matchedTier.id,
+            serviceType: 'recorrente',
+            frequency: validFrequency,
+            houseCondition: 'padrao',
+            petsOption: 'nenhum',
+          },
+          config
+        )
+      : null);
+
+  const storedFinalRecurring =
+    typeof lead.finalPriceRecurring === 'number' &&
+    Number.isFinite(lead.finalPriceRecurring) &&
+    lead.finalPriceRecurring > 0
+      ? lead.finalPriceRecurring
+      : null;
+
+  const storedTableRecurring =
+    typeof lead.tablePriceRecurring === 'number' &&
+    Number.isFinite(lead.tablePriceRecurring) &&
+    lead.tablePriceRecurring > 0
+      ? lead.tablePriceRecurring
+      : null;
+
+  // Detecta registro legado que tenha copiado o preço inicial para o recorrente sem tabela recorrente própria
+  const engineHasDistinctInitialAndRecurring =
+    referenceCalc === null ||
+    referenceCalc.recurringTablePrice !== referenceCalc.primaryTablePrice;
+
+  const looksLikeCopiedInitialInFinal =
+    storedFinalRecurring !== null &&
+    storedTableRecurring === null &&
+    storedFinalRecurring === initialPrice &&
+    engineHasDistinctInitialAndRecurring;
+
+  const looksLikeCopiedInitialInTable =
+    storedTableRecurring !== null &&
+    storedTableRecurring === tableInitialPrice &&
+    engineHasDistinctInitialAndRecurring;
+
+  if (
+    storedFinalRecurring !== null &&
+    !looksLikeCopiedInitialInFinal &&
+    !looksLikeCopiedInitialInTable
+  ) {
+    return {
+      isRecurring: true,
+      initialPrice,
+      tableInitialPrice,
+      recurringPrice: storedFinalRecurring,
+      tableRecurringPrice:
+        storedTableRecurring ??
+        derivedCalc?.recurringTablePrice ??
+        storedFinalRecurring,
+      recurringStatus: 'confirmed',
+      frequencyLabelPt,
+      biweeklyTablePrice: referenceCalc?.biweeklyTablePrice ?? null,
+    };
+  }
+
+  if (storedTableRecurring !== null && !looksLikeCopiedInitialInTable) {
+    return {
+      isRecurring: true,
+      initialPrice,
+      tableInitialPrice,
+      recurringPrice: storedTableRecurring,
+      tableRecurringPrice: storedTableRecurring,
+      recurringStatus: 'confirmed',
+      frequencyLabelPt,
+      biweeklyTablePrice: referenceCalc?.biweeklyTablePrice ?? null,
+    };
+  }
+
+  // Registro legado sem preço recorrente confiável salvo: só deriva se TODOS os parâmetros
+  // necessários existirem. Nunca trata o preço inicial legado como recorrente nem inventa valor.
+  if (
+    derivedCalc &&
+    derivedCalc.recurringTablePrice !== null &&
+    derivedCalc.recurringTablePrice > 0
+  ) {
+    return {
+      isRecurring: true,
+      initialPrice,
+      tableInitialPrice,
+      recurringPrice: derivedCalc.recurringTablePrice,
+      tableRecurringPrice: derivedCalc.recurringTablePrice,
+      recurringStatus: 'derived',
+      frequencyLabelPt,
+      biweeklyTablePrice: derivedCalc.biweeklyTablePrice,
+    };
+  }
+
+  return {
+    isRecurring: true,
+    initialPrice,
+    tableInitialPrice,
+    recurringPrice: null,
+    tableRecurringPrice: null,
+    recurringStatus: 'needs_confirmation',
+    frequencyLabelPt,
+    biweeklyTablePrice: null,
+  };
+}
+
+export interface ResolvedLeadPricing {
+  isRecurring: boolean;
+  initialFinalPrice: number;
+  initialTablePrice: number;
+  recurringFinalPrice: number | null;
+  recurringTablePrice: number | null;
+  recurringStatus: 'not_applicable' | 'available' | 'needs_confirmation';
+  derivedFromEngine: boolean;
+  frequencyLabelPt: string | null;
+  biweeklyTablePrice: number | null;
+}
+
+export function resolveLeadPricingFromEngine(
+  lead: Pick<
+    LeadQuoteRecord,
+    | 'serviceType'
+    | 'frequency'
+    | 'houseLabel'
+    | 'effectiveHouseLabel'
+    | 'squareFeet'
+    | 'houseCondition'
+    | 'petsOption'
+    | 'tablePricePrimary'
+    | 'finalPricePrimary'
+    | 'tablePriceRecurring'
+    | 'finalPriceRecurring'
+    | 'promoPercent'
+    | 'promoName'
+  >,
+  config: PricingConfig
+): ResolvedLeadPricing {
+  const summary = resolveLeadPricingSummary(lead, config);
+  const status: ResolvedLeadPricing['recurringStatus'] =
+    summary.recurringStatus === 'confirmed' ||
+    summary.recurringStatus === 'derived'
+      ? 'available'
+      : summary.recurringStatus;
+
+  return {
+    isRecurring: summary.isRecurring,
+    initialFinalPrice: summary.initialPrice,
+    initialTablePrice: summary.tableInitialPrice,
+    recurringFinalPrice: summary.recurringPrice,
+    recurringTablePrice: summary.tableRecurringPrice,
+    recurringStatus: status,
+    derivedFromEngine: summary.recurringStatus === 'derived',
+    frequencyLabelPt: summary.frequencyLabelPt,
+    biweeklyTablePrice: summary.biweeklyTablePrice,
+  };
+}
+
+

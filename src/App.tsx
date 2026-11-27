@@ -1,5 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ChevronDown, Download } from 'lucide-react';
+import {
+  type ComponentType,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  AlertTriangle,
+  BarChart3,
+  Calculator,
+  Calendar,
+  ChevronDown,
+  Download,
+  LogOut,
+  MessageSquare,
+  Plus,
+  RefreshCw,
+  Settings,
+} from 'lucide-react';
 import {
   INITIAL_LEAD_STATE,
   SERVICE_TYPE_LABELS,
@@ -10,10 +29,10 @@ import { DashboardAndHistoryView } from './components/DashboardAndHistoryView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LeadInputLayer } from './components/LeadInputLayer';
 import { LeadMessageParserBox } from './components/LeadMessageParserBox';
-import { QuickQuoteCard } from './components/QuickQuoteCard';
-import { SmartScheduleSuggestions } from './components/SmartScheduleSuggestions';
 import { MessageAndHistoryLayer } from './components/MessageAndHistoryLayer';
 import { NegotiationSubTab, NegotiationView } from './components/NegotiationView';
+import { QuickQuoteCard } from './components/QuickQuoteCard';
+import { SmartScheduleSuggestions } from './components/SmartScheduleSuggestions';
 import { PhotoAnalysisLayer } from './components/PhotoAnalysisLayer';
 import { PricingEngineLayer } from './components/PricingEngineLayer';
 import { SettingsView } from './components/SettingsView';
@@ -64,26 +83,43 @@ import { parseLeadLocally } from './utils/localLeadParser';
 import {
   DEFAULT_GOOGLE_CALENDAR_EMAIL,
   clearGoogleCalendarAccessToken,
-  getFreshGoogleCalendarAccessToken,
-  getGoogleCalendarAccessToken,
   googleCalendarLogout,
   googleCalendarSignIn,
-  hasGoogleCalendarAccount,
+  googleCalendarSignInViaFirebase,
   initGoogleCalendarAuth,
-  renewGoogleCalendarAccessToken,
 } from './utils/googleCalendarAuth';
-import { GoogleCalendarUserError } from './utils/googleCalendarErrors';
+import { resolveDateOptionsForCity } from './utils/dateOptions';
 import {
   CalendarWorkspaceBridge,
   CreateCalendarEventInput,
   GoogleCalendarAuthExpiredError,
   GoogleCalendarEvent,
   GoogleCalendarListItem,
+  GoogleCalendarPermissionError,
   createGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
+  evaluateCalendarSlotAvailability,
   listGoogleCalendars,
   listUpcomingCalendarEvents,
 } from './utils/googleCalendarApi';
+import {
+  signOutPrimarySession,
+  subscribePrimaryAuth,
+} from './utils/firebaseClient';
+import {
+  deleteHelperFromFirestore,
+  deleteLeadFromFirestore,
+  importBackupBundleToFirestore,
+  normalizeDocId,
+  reconcileRemoteHelpersWithLocal,
+  reconcileRemoteLeadsWithLocal,
+  runSafeLocalToFirestoreMigration,
+  savePricingToFirestore,
+  subscribeWorkspaceData,
+  updateSyncMetaLastBackup,
+  upsertHelperToFirestore,
+  upsertLeadToFirestore,
+} from './utils/firestoreSync';
 
 type ActiveTab =
   | 'calculadora'
@@ -96,21 +132,14 @@ export default function App() {
   const [authStatus, setAuthStatus] = useState<{
     checking: boolean;
     authenticated: boolean;
-    mode: 'env' | 'setup_required' | 'claimed';
+    userEmail: string | null;
   }>({
     checking: true,
     authenticated: false,
-    mode: 'env',
+    userEmail: null,
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('calculadora');
-  const [config, setConfig] = useState<PricingConfig>(() => loadPricingConfig());
-  const [history, setHistory] = useState<LeadQuoteRecord[]>(() =>
-    loadQuoteHistory()
-  );
-  const [helpers, setHelpers] = useState<PotentialHelperRecord[]>(() =>
-    loadPotentialHelpers()
-  );
   // Aba que a Negociação abre: 'ajudantes' quando vem do botão da Agenda.
   const [negotiationStartTab, setNegotiationStartTab] =
     useState<NegotiationSubTab>('hoje');
@@ -119,9 +148,28 @@ export default function App() {
       setNegotiationStartTab('hoje');
     }
   }, [activeTab, negotiationStartTab]);
+  const [showMoreDetails, setShowMoreDetails] = useState(false);
+  const [config, setConfig] = useState<PricingConfig>(() => loadPricingConfig());
+  const [history, setHistory] = useState<LeadQuoteRecord[]>(() =>
+    loadQuoteHistory()
+  );
+  const [helpers, setHelpers] = useState<PotentialHelperRecord[]>(() =>
+    loadPotentialHelpers()
+  );
   const [lastBackupAt, setLastBackupAt] = useState<string | null>(() =>
     loadLastBackupAt()
   );
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncRetrying, setSyncRetrying] = useState(false);
+  const [syncRetryNonce, setSyncRetryNonce] = useState(0);
+
+  const historyRef = useRef(history);
+  const helpersRef = useRef(helpers);
+  const deletedLeadIdsRef = useRef<Set<string>>(new Set());
+  const deletedHelperIdsRef = useRef<Set<string>>(new Set());
+  const pendingLeadIdsRef = useRef<Set<string>>(new Set());
+  const pendingHelperIdsRef = useRef<Set<string>>(new Set());
+
   const [selectedNegotiationLeadId, setSelectedNegotiationLeadId] = useState<
     string | null
   >(null);
@@ -150,7 +198,6 @@ export default function App() {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const [leadPasteText, setLeadPasteText] = useState('');
-  const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [isParsingLead, setIsParsingLead] = useState(false);
   const [parseLeadError, setParseLeadError] = useState<string | null>(null);
   const [parseLeadSummary, setParseLeadSummary] = useState<string | null>(null);
@@ -169,7 +216,7 @@ export default function App() {
     null
   );
 
-  // Estado da integração com Google Calendar (o token fica salvo até vencer, ver googleCalendarAuth.ts)
+  // Estado em memória da integração com Google Calendar (token nunca vai para localStorage)
   const [calendarToken, setCalendarToken] = useState<string | null>(null);
   const [calendarUserEmail, setCalendarUserEmail] = useState<string | null>(
     null
@@ -183,6 +230,7 @@ export default function App() {
   const [calendarEvents, setCalendarEvents] = useState<GoogleCalendarEvent[]>(
     []
   );
+  const [calendarSyncSucceeded, setCalendarSyncSucceeded] = useState(false);
 
   const calc = useMemo(() => calculateQuote(input, config), [input, config]);
 
@@ -204,40 +252,145 @@ export default function App() {
 
   useEffect(() => {
     setOnUnauthorizedHandler(() => {
-      setAuthStatus((prev) => ({ ...prev, authenticated: false }));
+      void signOutPrimarySession().catch(() => undefined);
+      setAuthStatus({
+        checking: false,
+        authenticated: false,
+        userEmail: null,
+      });
     });
     return () => setOnUnauthorizedHandler(null);
   }, []);
 
   useEffect(() => {
-    let active = true;
-    apiFetch('/api/auth/status')
-      .then((res) => res.json())
-      .then(
-        (data: {
-          authenticated?: boolean;
-          mode?: 'env' | 'setup_required' | 'claimed';
-        }) => {
-          if (!active) return;
-          setAuthStatus({
-            checking: false,
-            authenticated: Boolean(data.authenticated),
-            mode: data.mode || 'env',
-          });
-        }
-      )
-      .catch(() => {
-        if (!active) return;
-        setAuthStatus({
-          checking: false,
-          authenticated: false,
-          mode: 'env',
-        });
+    return subscribePrimaryAuth((user, authorized) => {
+      setAuthStatus({
+        checking: false,
+        authenticated: authorized,
+        userEmail: authorized && user?.email ? user.email : null,
       });
+    });
+  }, []);
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  useEffect(() => {
+    helpersRef.current = helpers;
+  }, [helpers]);
+
+  useEffect(() => {
+    if (!authStatus.authenticated) return;
+    let active = true;
+    let unsubscribeWorkspace: (() => void) | null = null;
+
+    const startSync = async () => {
+      try {
+        await runSafeLocalToFirestoreMigration();
+      } catch (err) {
+        console.error('Erro na migração inicial para o Firestore:', err);
+        if (!active) return;
+        setSyncRetrying(false);
+        setSyncError(
+          'Falha na sincronização com a nuvem. Seus leads, conversas e configurações locais foram preservados.'
+        );
+        // Não inicia sincronização remota enquanto a migração não for concluída com sucesso
+        return;
+      }
+
+      if (!active) return;
+      setSyncError(null);
+      setSyncRetrying(false);
+
+      unsubscribeWorkspace = subscribeWorkspaceData({
+        onPricing: (remoteConfig) => {
+          if (!active) return;
+          // WhatsApp da equipe, link de avaliação e endereço de saída ainda
+          // não vão para a nuvem: ficam salvos neste aparelho.
+          setConfig((prev) => {
+            const merged: PricingConfig = {
+              ...remoteConfig,
+              teamWhatsAppNumbers: prev.teamWhatsAppNumbers,
+              googleReviewLink: prev.googleReviewLink,
+              homeStartAddress: prev.homeStartAddress,
+            };
+            savePricingConfig(merged);
+            return merged;
+          });
+        },
+        onLeads: (remoteLeads, meta) => {
+          if (!active) return;
+          const reconciled = reconcileRemoteLeadsWithLocal(
+            remoteLeads,
+            historyRef.current,
+            {
+              fromCache: meta.fromCache,
+              explicitlyDeletedIds: deletedLeadIdsRef.current,
+              pendingLocalIds: pendingLeadIdsRef.current,
+            }
+          );
+          if (reconciled.preservedLocalOnly) {
+            setSyncError(
+              'A nuvem retornou vazia enquanto existem leads locais. Os dados locais foram preservados.'
+            );
+          }
+          setHistory(reconciled.leads);
+          saveQuoteHistory(reconciled.leads);
+        },
+        onHelpers: (remoteHelpers, meta) => {
+          if (!active) return;
+          const reconciled = reconcileRemoteHelpersWithLocal(
+            remoteHelpers,
+            helpersRef.current,
+            {
+              fromCache: meta.fromCache,
+              explicitlyDeletedIds: deletedHelperIdsRef.current,
+              pendingLocalIds: pendingHelperIdsRef.current,
+            }
+          );
+          // Equipe, cidades e dias de cada ajudante ficam salvos neste aparelho.
+          const localById = new Map(
+            helpersRef.current.map((h) => [h.id, h] as const)
+          );
+          const withLocalTeamData = reconciled.helpers.map((h) => {
+            const local = localById.get(h.id);
+            return local
+              ? {
+                  ...h,
+                  isTeam: local.isTeam,
+                  serviceCities: local.serviceCities,
+                  availableWeekdays: local.availableWeekdays,
+                }
+              : h;
+          });
+          setHelpers(withLocalTeamData);
+          savePotentialHelpers(withLocalTeamData);
+        },
+        onSyncMeta: (meta) => {
+          if (!active || !meta.lastBackupAt) return;
+          setLastBackupAt(meta.lastBackupAt);
+          saveLastBackupAt(meta.lastBackupAt);
+        },
+        onError: (err) => {
+          console.error('Erro na sincronização em tempo real do Firestore:', err);
+          if (!active) return;
+          setSyncError(
+            'Falha temporária na sincronização com a nuvem. Seus dados locais continuam salvos.'
+          );
+        },
+      });
+    };
+
+    void startSync();
+
     return () => {
       active = false;
+      if (unsubscribeWorkspace) {
+        unsubscribeWorkspace();
+      }
     };
-  }, []);
+  }, [authStatus.authenticated, syncRetryNonce]);
 
   useEffect(() => {
     if (!authStatus.authenticated || mapsApiKey) return;
@@ -274,231 +427,308 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [activeTab, settingsDirty]);
 
-  const resetCalendarState = useCallback(() => {
-    setCalendarToken(null);
-    setCalendars([]);
-    setCalendarEvents([]);
-  }, []);
+  const lastLoadedCalendarTokenRef = useRef<string | null>(null);
 
-  const describeCalendarError = useCallback(
-    (err: unknown, fallback: string): string | null => {
-      if (err instanceof GoogleCalendarUserError && err.silent) return null;
-      return err instanceof Error && err.message ? err.message : fallback;
-    },
-    []
-  );
-
-  /**
-   * Executa uma ação na agenda com um token válido. Se o token estiver perto
-   * de vencer (ou o Google responder 401), renova automaticamente uma vez e
-   * repete a ação. Chamado a partir de cliques, então a janela rápida do
-   * Google não é bloqueada pelo navegador.
-   */
-  const withCalendarToken = useCallback(
-    async <T,>(action: (token: string) => Promise<T>): Promise<T> => {
-      let token = await getFreshGoogleCalendarAccessToken(true);
-      if (!token) {
-        throw new GoogleCalendarUserError(
-          'Conecte o Google Agenda antes de continuar.',
-          'calendar/not-connected'
-        );
-      }
-      setCalendarToken(token);
-      try {
-        return await action(token);
-      } catch (err) {
-        if (!(err instanceof GoogleCalendarAuthExpiredError)) throw err;
-        clearGoogleCalendarAccessToken();
-        token = await renewGoogleCalendarAccessToken();
-        setCalendarToken(token);
-        return await action(token);
-      }
-    },
-    []
-  );
-
-  const fetchCalendarData = useCallback(
-    async (token: string, preferredCalendarId?: string) => {
-      const list = await listGoogleCalendars(token);
-      setCalendars(list);
-
-      const preferredEmailMatch = list.find(
-        (item) =>
-          item.id.toLowerCase() === DEFAULT_GOOGLE_CALENDAR_EMAIL.toLowerCase()
-      );
-
-      const targetId =
-        preferredCalendarId &&
-        list.some((item) => item.id === preferredCalendarId)
-          ? preferredCalendarId
-          : preferredEmailMatch?.id ||
-            list.find((item) => item.primary)?.id ||
-            'primary';
-
-      setSelectedCalendarId(targetId);
-      const upcoming = await listUpcomingCalendarEvents(token, targetId, 45);
-      setCalendarEvents(upcoming);
-    },
-    []
-  );
-
-  /** Carregamento automático (sem clique): nunca abre janela do Google. */
   const loadCalendarData = useCallback(
-    async (token: string, preferredCalendarId?: string) => {
+    async (
+      token: string,
+      preferredCalendarId?: string,
+      options: { silentIfInsufficientScope?: boolean } = {}
+    ) => {
+      lastLoadedCalendarTokenRef.current = token;
       setCalendarLoading(true);
       setCalendarError(null);
+      setCalendarSyncSucceeded(false);
       try {
-        await fetchCalendarData(token, preferredCalendarId);
-      } catch (err) {
-        if (err instanceof GoogleCalendarAuthExpiredError) {
-          clearGoogleCalendarAccessToken();
-          resetCalendarState();
+        let list: GoogleCalendarListItem[] = [];
+        try {
+          list = await listGoogleCalendars(token);
+        } catch (listErr) {
+          if (
+            listErr instanceof GoogleCalendarPermissionError &&
+            !listErr.apiDisabled
+          ) {
+            list = [
+              {
+                id: 'primary',
+                summary: 'Agenda principal',
+                primary: true,
+              },
+            ];
+          } else {
+            throw listErr;
+          }
         }
-        setCalendarError(
-          describeCalendarError(err, 'Erro ao carregar eventos do Google Agenda.')
+
+        if (list.length === 0) {
+          list = [
+            {
+              id: 'primary',
+              summary: 'Agenda principal',
+              primary: true,
+            },
+          ];
+        }
+        setCalendars(list);
+
+        const primaryCalendarEmail = list.find(
+          (item) => item.primary && item.id.includes('@')
+        )?.id;
+        if (primaryCalendarEmail) {
+          setCalendarUserEmail(primaryCalendarEmail);
+        }
+
+        const preferredEmailMatch = list.find(
+          (item) =>
+            item.id.toLowerCase() ===
+            DEFAULT_GOOGLE_CALENDAR_EMAIL.toLowerCase()
         );
+
+        const targetId =
+          preferredCalendarId &&
+          list.some((item) => item.id === preferredCalendarId)
+            ? preferredCalendarId
+            : preferredEmailMatch?.id ||
+              list.find((item) => item.primary)?.id ||
+              'primary';
+
+        setSelectedCalendarId(targetId);
+        const upcoming = await listUpcomingCalendarEvents(token, targetId, 45);
+        setCalendarEvents(upcoming);
+        setCalendarSyncSucceeded(true);
+      } catch (err) {
+        setCalendarSyncSucceeded(false);
+        if (
+          err instanceof GoogleCalendarAuthExpiredError ||
+          err instanceof GoogleCalendarPermissionError
+        ) {
+          lastLoadedCalendarTokenRef.current = null;
+          clearGoogleCalendarAccessToken();
+          setCalendarToken(null);
+          setCalendars([]);
+          setCalendarEvents([]);
+          if (
+            !(
+              options.silentIfInsufficientScope &&
+              err instanceof GoogleCalendarPermissionError &&
+              err.insufficientScope
+            )
+          ) {
+            setCalendarError(err.message);
+          }
+        } else {
+          setCalendarError(
+            err instanceof Error
+              ? err.message
+              : 'Erro ao carregar eventos do Google Calendar.'
+          );
+        }
       } finally {
         setCalendarLoading(false);
       }
     },
-    [fetchCalendarData, resetCalendarState, describeCalendarError]
+    []
   );
 
   useEffect(() => {
     const unsubscribe = initGoogleCalendarAuth(
       (user, token) => {
-        // Recarregou a página com a conexão ainda válida: reconecta sozinho.
         setCalendarUserEmail(user.email || user.displayName || null);
         setCalendarToken(token);
-        void loadCalendarData(token);
+        if (lastLoadedCalendarTokenRef.current !== token) {
+          void loadCalendarData(token, undefined, {
+            silentIfInsufficientScope: true,
+          });
+        }
       },
       () => {
+        lastLoadedCalendarTokenRef.current = null;
+        setCalendarToken(null);
         setCalendarUserEmail(null);
-        resetCalendarState();
-      },
-      (user) => {
-        // Conta lembrada, mas o token venceu: um toque em Conectar renova.
-        setCalendarUserEmail(user.email || user.displayName || null);
-        resetCalendarState();
+        setCalendars([]);
+        setCalendarEvents([]);
+        setCalendarSyncSucceeded(false);
       }
     );
     return () => unsubscribe();
-  }, [loadCalendarData, resetCalendarState]);
+  }, [loadCalendarData]);
 
   const handleCalendarSignIn = useCallback(async () => {
     setCalendarLoggingIn(true);
     setCalendarError(null);
+    setCalendarSyncSucceeded(false);
     try {
       const result = await googleCalendarSignIn();
-      setCalendarUserEmail(
-        result.user.email || result.user.displayName || null
-      );
-      setCalendarToken(result.accessToken);
-      await loadCalendarData(result.accessToken, selectedCalendarId);
+      if (result) {
+        if (result.userEmail) {
+          setCalendarUserEmail(result.userEmail);
+        }
+        setCalendarToken(result.accessToken);
+        await loadCalendarData(result.accessToken);
+      }
     } catch (err) {
+      setCalendarSyncSucceeded(false);
+      const message = err instanceof Error ? err.message : '';
       setCalendarError(
-        describeCalendarError(err, 'Não foi possível conectar ao Google Agenda.')
+        message || 'Não foi possível conectar ao Google Calendar.'
       );
     } finally {
       setCalendarLoggingIn(false);
     }
-  }, [loadCalendarData, describeCalendarError, selectedCalendarId]);
+  }, [loadCalendarData]);
+
+  const handleCalendarSignInFallback = useCallback(async () => {
+    setCalendarLoggingIn(true);
+    setCalendarError(null);
+    setCalendarSyncSucceeded(false);
+    try {
+      const result = await googleCalendarSignInViaFirebase(true);
+      if (result) {
+        if (result.userEmail) {
+          setCalendarUserEmail(result.userEmail);
+        }
+        setCalendarToken(result.accessToken);
+        await loadCalendarData(result.accessToken);
+      }
+    } catch (err) {
+      setCalendarSyncSucceeded(false);
+      const message = err instanceof Error ? err.message : '';
+      setCalendarError(
+        message || 'Não foi possível conectar ao Google Calendar.'
+      );
+    } finally {
+      setCalendarLoggingIn(false);
+    }
+  }, [loadCalendarData]);
 
   const handleCalendarLogout = useCallback(async () => {
+    lastLoadedCalendarTokenRef.current = null;
     await googleCalendarLogout();
-    resetCalendarState();
+    setCalendarToken(null);
     setCalendarUserEmail(null);
+    setCalendars([]);
+    setCalendarEvents([]);
     setSelectedCalendarId('primary');
     setCalendarError(null);
-  }, [resetCalendarState]);
-
-  const handleCalendarActionError = useCallback(
-    (err: unknown, fallback: string) => {
-      if (err instanceof GoogleCalendarUserError && err.silent) return;
-      if (!hasGoogleCalendarAccount() || !getGoogleCalendarAccessToken()) {
-        resetCalendarState();
-      }
-      setCalendarError(describeCalendarError(err, fallback));
-    },
-    [resetCalendarState, describeCalendarError]
-  );
+    setCalendarSyncSucceeded(false);
+  }, []);
 
   const handleSelectCalendar = useCallback(
     async (nextCalendarId: string) => {
       setSelectedCalendarId(nextCalendarId);
-      if (!calendarToken) return;
+      if (!calendarToken) {
+        setCalendarSyncSucceeded(false);
+        return;
+      }
       setCalendarLoading(true);
       setCalendarError(null);
+      setCalendarSyncSucceeded(false);
       try {
-        const upcoming = await withCalendarToken((token) =>
-          listUpcomingCalendarEvents(token, nextCalendarId, 45)
+        const upcoming = await listUpcomingCalendarEvents(
+          calendarToken,
+          nextCalendarId,
+          45
         );
         setCalendarEvents(upcoming);
+        setCalendarSyncSucceeded(true);
       } catch (err) {
-        handleCalendarActionError(err, 'Erro ao carregar a agenda selecionada.');
+        setCalendarSyncSucceeded(false);
+        if (
+          err instanceof GoogleCalendarAuthExpiredError ||
+          err instanceof GoogleCalendarPermissionError
+        ) {
+          clearGoogleCalendarAccessToken();
+          setCalendarToken(null);
+          setCalendars([]);
+          setCalendarEvents([]);
+        }
+        setCalendarError(
+          err instanceof Error
+            ? err.message
+            : 'Erro ao carregar a agenda selecionada.'
+        );
       } finally {
         setCalendarLoading(false);
       }
     },
-    [calendarToken, withCalendarToken, handleCalendarActionError]
+    [calendarToken]
   );
 
-  const handleRefreshCalendar = useCallback(async () => {
-    if (!hasGoogleCalendarAccount()) return;
-    setCalendarLoading(true);
-    setCalendarError(null);
-    try {
-      await withCalendarToken((token) =>
-        fetchCalendarData(token, selectedCalendarId)
-      );
-    } catch (err) {
-      handleCalendarActionError(err, 'Erro ao atualizar a agenda.');
-    } finally {
-      setCalendarLoading(false);
-    }
-  }, [
-    selectedCalendarId,
-    withCalendarToken,
-    fetchCalendarData,
-    handleCalendarActionError,
-  ]);
+  const handleRefreshCalendar = useCallback(() => {
+    if (!calendarToken) return;
+    void loadCalendarData(calendarToken, selectedCalendarId);
+  }, [calendarToken, selectedCalendarId, loadCalendarData]);
 
   const handleCreateCalendarEvent = useCallback(
     async (eventInput: CreateCalendarEventInput) => {
-      if (!hasGoogleCalendarAccount()) {
-        throw new Error('Conecte o Google Agenda antes de agendar.');
+      if (!calendarToken) {
+        throw new Error('Conecte o Google Calendar antes de agendar.');
       }
       try {
-        const upcoming = await withCalendarToken(async (token) => {
-          await createGoogleCalendarEvent(token, selectedCalendarId, eventInput);
-          return listUpcomingCalendarEvents(token, selectedCalendarId, 45);
-        });
+        await createGoogleCalendarEvent(
+          calendarToken,
+          selectedCalendarId,
+          eventInput
+        );
+        const upcoming = await listUpcomingCalendarEvents(
+          calendarToken,
+          selectedCalendarId,
+          45
+        );
         setCalendarEvents(upcoming);
+        setCalendarSyncSucceeded(true);
       } catch (err) {
-        handleCalendarActionError(err, 'Não foi possível criar o evento.');
+        if (
+          err instanceof GoogleCalendarAuthExpiredError ||
+          err instanceof GoogleCalendarPermissionError
+        ) {
+          clearGoogleCalendarAccessToken();
+          setCalendarToken(null);
+          setCalendars([]);
+          setCalendarEvents([]);
+          setCalendarSyncSucceeded(false);
+          setCalendarError(err.message);
+        }
         throw err;
       }
     },
-    [selectedCalendarId, withCalendarToken, handleCalendarActionError]
+    [calendarToken, selectedCalendarId]
   );
 
   const handleDeleteCalendarEvent = useCallback(
     async (eventId: string) => {
-      if (!hasGoogleCalendarAccount()) {
-        throw new Error('Conecte o Google Agenda antes de excluir.');
+      if (!calendarToken) {
+        throw new Error('Conecte o Google Calendar antes de excluir.');
       }
       try {
-        const upcoming = await withCalendarToken(async (token) => {
-          await deleteGoogleCalendarEvent(token, selectedCalendarId, eventId);
-          return listUpcomingCalendarEvents(token, selectedCalendarId, 45);
-        });
+        await deleteGoogleCalendarEvent(
+          calendarToken,
+          selectedCalendarId,
+          eventId
+        );
+        const upcoming = await listUpcomingCalendarEvents(
+          calendarToken,
+          selectedCalendarId,
+          45
+        );
         setCalendarEvents(upcoming);
+        setCalendarSyncSucceeded(true);
       } catch (err) {
-        handleCalendarActionError(err, 'Não foi possível excluir o evento.');
+        if (
+          err instanceof GoogleCalendarAuthExpiredError ||
+          err instanceof GoogleCalendarPermissionError
+        ) {
+          clearGoogleCalendarAccessToken();
+          setCalendarToken(null);
+          setCalendars([]);
+          setCalendarEvents([]);
+          setCalendarSyncSucceeded(false);
+          setCalendarError(err.message);
+        }
         throw err;
       }
     },
-    [selectedCalendarId, withCalendarToken, handleCalendarActionError]
+    [calendarToken, selectedCalendarId]
   );
 
   const calendarIntegration = useMemo<CalendarWorkspaceBridge>(
@@ -508,6 +738,7 @@ export default function App() {
       isLoggingIn: calendarLoggingIn,
       isLoading: calendarLoading,
       error: calendarError,
+      syncSucceeded: calendarSyncSucceeded,
       calendars,
       selectedCalendarId,
       events: calendarEvents,
@@ -522,6 +753,7 @@ export default function App() {
       calendarLoggingIn,
       calendarLoading,
       calendarError,
+      calendarSyncSucceeded,
       calendars,
       selectedCalendarId,
       calendarEvents,
@@ -531,18 +763,57 @@ export default function App() {
     ]
   );
 
+  const calculatorCalendarAvailability = useMemo(() => {
+    const resolvedDates = resolveDateOptionsForCity(
+      input.city,
+      config.cityFixedDays,
+      input.dayOption1,
+      input.dayOption2
+    );
+    const durationHours =
+      input.serviceType === 'deep_clean' || input.serviceType === 'move_in_out'
+        ? 4
+        : 3;
+    return evaluateCalendarSlotAvailability(
+      calendarIntegration,
+      resolvedDates.dates,
+      durationHours
+    );
+  }, [
+    calendarIntegration,
+    input.city,
+    input.dayOption1,
+    input.dayOption2,
+    input.serviceType,
+    config.cityFixedDays,
+  ]);
+
   const handleSaveConfig = (nextConfig: PricingConfig) => {
-    setConfig(nextConfig);
-    savePricingConfig(nextConfig);
+    const stampedConfig: PricingConfig = {
+      ...nextConfig,
+      updatedAt: new Date().toISOString(),
+    };
+    setConfig(stampedConfig);
+    savePricingConfig(stampedConfig);
+    void savePricingToFirestore(stampedConfig)
+      .then(() => {
+        setSyncError(null);
+      })
+      .catch((err) => {
+        console.error('Erro ao salvar configurações no Firestore:', err);
+        setSyncError(
+          'Não foi possível sincronizar os ajustes na nuvem agora. Suas configurações locais foram preservadas.'
+        );
+      });
     setInput((prev) => ({
       ...prev,
       dayOption1:
         prev.dayOption1 === config.defaultDayOption1
-          ? nextConfig.defaultDayOption1
+          ? stampedConfig.defaultDayOption1
           : prev.dayOption1,
       dayOption2:
         prev.dayOption2 === config.defaultDayOption2
-          ? nextConfig.defaultDayOption2
+          ? stampedConfig.defaultDayOption2
           : prev.dayOption2,
     }));
     setSettingsDirty(false);
@@ -582,6 +853,9 @@ export default function App() {
     const nowIso = new Date().toISOString();
     saveLastBackupAt(nowIso);
     setLastBackupAt(nowIso);
+    void updateSyncMetaLastBackup(nowIso).catch((err) => {
+      console.error('Erro ao registrar data do backup no Firestore:', err);
+    });
   };
 
   const handleImportBackup = (rawJson: string) => {
@@ -598,6 +872,15 @@ export default function App() {
     const nowIso = new Date().toISOString();
     saveLastBackupAt(nowIso);
     setLastBackupAt(nowIso);
+
+    void importBackupBundleToFirestore(
+      restored.pricingConfig,
+      restored.history,
+      restored.helpers,
+      nowIso
+    ).catch((err) => {
+      console.error('Erro ao sincronizar backup importado com Firestore:', err);
+    });
   };
 
   const clearMissingField = (field: string) => {
@@ -789,6 +1072,14 @@ export default function App() {
       }
 
       if (!response.ok) {
+        const isAuthFailure = response.status === 401 || response.status === 403;
+        if (!isAuthFailure && response.status !== 400 && localResult.matchedFieldsCount > 0) {
+          applyParsedLeadPayload(localResult.payload, 'Lido em 0,1 s');
+          setParseLeadSummary(
+            'IA indisponível no momento — campos detectados foram preenchidos pelo leitor local. Revise e complete os itens em amarelo.'
+          );
+          return;
+        }
         if (response.status === 503 || response.status === 429) {
           throw new Error(
             payload.error ||
@@ -802,11 +1093,21 @@ export default function App() {
 
       applyParsedLeadPayload(payload, 'Lido com IA');
     } catch (err) {
-      setParseLeadError(
-        err instanceof Error
-          ? err.message
-          : 'Erro ao interpretar a mensagem do lead.'
-      );
+      if (
+        !(err instanceof Error && /autenticação|acesso negado|sessão expirada/i.test(err.message)) &&
+        localResult.matchedFieldsCount > 0
+      ) {
+        applyParsedLeadPayload(localResult.payload, 'Lido em 0,1 s');
+        setParseLeadSummary(
+          'IA indisponível no momento — campos detectados foram preenchidos pelo leitor local. Revise e complete os itens em amarelo.'
+        );
+      } else {
+        setParseLeadError(
+          err instanceof Error
+            ? err.message
+            : 'Erro ao interpretar a mensagem do lead.'
+        );
+      }
     } finally {
       setIsParsingLead(false);
     }
@@ -908,7 +1209,8 @@ export default function App() {
       config.deepCleanRangeMarginPercent,
       config.servedCities,
       new Date(),
-      config.cityFixedDays
+      config.cityFixedDays,
+      calculatorCalendarAvailability
     );
 
     const initialInteraction: LeadInteractionEntry = {
@@ -983,9 +1285,23 @@ export default function App() {
       mapsInsight,
       dayOption1: input.dayOption1,
       dayOption2: input.dayOption2,
+      updatedAt: nowIso,
     };
 
+    const docId = normalizeDocId(newRecord.id);
+    pendingLeadIdsRef.current.add(docId);
     setHistory((prev) => [newRecord, ...prev]);
+    void upsertLeadToFirestore(newRecord)
+      .then(() => {
+        pendingLeadIdsRef.current.delete(docId);
+        setSyncError(null);
+      })
+      .catch((err) => {
+        console.error('Erro ao salvar lead no Firestore:', err);
+        setSyncError(
+          'Não foi possível enviar o lead para a nuvem agora. Ele foi mantido localmente.'
+        );
+      });
     setLastSavedLeadId(newRecord.id);
     setJustSaved(true);
     window.setTimeout(() => setJustSaved(false), 6000);
@@ -1004,73 +1320,191 @@ export default function App() {
     status: QuoteStatus,
     lossReason: string
   ) => {
+    const target = history.find((rec) => rec.id === id);
+    if (!target) return;
+
+    let stage: NegotiationStage = target.stage;
+    if (status === 'Fechou') stage = 'Agendado';
+    else if (status === 'Perdeu') stage = 'Perdido';
+    else if (
+      target.stage === 'Agendado' ||
+      target.stage === 'Cliente fixo' ||
+      target.stage === 'Perdido'
+    ) {
+      stage = 'Orçamento enviado';
+    }
+    const updatedRecord: LeadQuoteRecord = {
+      ...target,
+      status,
+      lossReason,
+      stage,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const docId = normalizeDocId(updatedRecord.id);
+    pendingLeadIdsRef.current.add(docId);
     setHistory((prev) =>
-      prev.map((rec) => {
-        if (rec.id !== id) return rec;
-        let stage: NegotiationStage = rec.stage;
-        if (status === 'Fechou') stage = 'Agendado';
-        else if (status === 'Perdeu') stage = 'Perdido';
-        else if (
-          rec.stage === 'Agendado' ||
-          rec.stage === 'Cliente fixo' ||
-          rec.stage === 'Perdido'
-        ) {
-          stage = 'Orçamento enviado';
-        }
-        return { ...rec, status, lossReason, stage };
-      })
+      prev.map((rec) => (rec.id === id ? updatedRecord : rec))
     );
+    void upsertLeadToFirestore(updatedRecord)
+      .then(() => {
+        pendingLeadIdsRef.current.delete(docId);
+        setSyncError(null);
+      })
+      .catch((err) => {
+        console.error('Erro ao atualizar status do lead no Firestore:', err);
+        setSyncError(
+          'Não foi possível sincronizar a atualização do lead na nuvem agora. Seus dados locais foram preservados.'
+        );
+      });
   };
 
   const handleUpdateNegotiationLead = (updated: LeadQuoteRecord) => {
+    const stamped: LeadQuoteRecord = {
+      ...updated,
+      updatedAt: new Date().toISOString(),
+    };
+    const docId = normalizeDocId(stamped.id);
+    pendingLeadIdsRef.current.add(docId);
     setHistory((prev) =>
-      prev.map((rec) => (rec.id === updated.id ? updated : rec))
+      prev.map((rec) => (rec.id === stamped.id ? stamped : rec))
     );
+    void upsertLeadToFirestore(stamped)
+      .then(() => {
+        pendingLeadIdsRef.current.delete(docId);
+        setSyncError(null);
+      })
+      .catch((err) => {
+        console.error('Erro ao atualizar negociação no Firestore:', err);
+        setSyncError(
+          'Não foi possível sincronizar a conversa na nuvem agora. Seus dados locais foram preservados.'
+        );
+      });
   };
 
   const handleCreateQuickLead = (newLead: LeadQuoteRecord) => {
-    setHistory((prev) => [newLead, ...prev]);
+    const stamped: LeadQuoteRecord = {
+      ...newLead,
+      updatedAt: newLead.updatedAt || new Date().toISOString(),
+    };
+    const docId = normalizeDocId(stamped.id);
+    pendingLeadIdsRef.current.add(docId);
+    setHistory((prev) => [stamped, ...prev]);
+    void upsertLeadToFirestore(stamped)
+      .then(() => {
+        pendingLeadIdsRef.current.delete(docId);
+        setSyncError(null);
+      })
+      .catch((err) => {
+        console.error('Erro ao criar lead rápido no Firestore:', err);
+        setSyncError(
+          'Não foi possível enviar o lead para a nuvem agora. Ele foi mantido localmente.'
+        );
+      });
   };
 
   const handleDeleteRecord = (id: string) => {
+    const docId = normalizeDocId(id);
+    deletedLeadIdsRef.current.add(docId);
+    pendingLeadIdsRef.current.delete(docId);
     setHistory((prev) => prev.filter((rec) => rec.id !== id));
     if (selectedNegotiationLeadId === id) {
       setSelectedNegotiationLeadId(null);
     }
+    void deleteLeadFromFirestore(id)
+      .then(() => {
+        setSyncError(null);
+      })
+      .catch((err) => {
+        console.error('Erro ao excluir lead no Firestore:', err);
+        setSyncError(
+          'Não foi possível confirmar a exclusão do lead na nuvem agora.'
+        );
+      });
   };
 
   const handleSavePotentialHelper = (lead: LeadQuoteRecord) => {
-    setHelpers((prev) => {
-      const alreadyExists = prev.some(
-        (h) =>
-          h.sourceLeadId === lead.id ||
-          (lead.phone && h.phone && h.phone === lead.phone)
-      );
-      if (alreadyExists) return prev;
-      const newHelper: PotentialHelperRecord = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        name: lead.clientName || 'Contato sem nome',
-        phone: lead.phone || '',
-        email: lead.email || '',
-        city: lead.city || '',
-        notes: lead.notes || '',
-        savedAt: new Date().toISOString(),
-        sourceLeadId: lead.id,
-      };
-      return [newHelper, ...prev];
-    });
+    const alreadyExists = helpers.some(
+      (h) =>
+        h.sourceLeadId === lead.id ||
+        (lead.phone && h.phone && h.phone === lead.phone)
+    );
+    if (alreadyExists) return;
+
+    const nowIso = new Date().toISOString();
+    const newHelper: PotentialHelperRecord = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: lead.clientName || 'Contato sem nome',
+      phone: lead.phone || '',
+      email: lead.email || '',
+      city: lead.city || '',
+      notes: lead.notes || '',
+      savedAt: nowIso,
+      updatedAt: nowIso,
+      sourceLeadId: lead.id,
+    };
+    const docId = normalizeDocId(newHelper.id);
+    pendingHelperIdsRef.current.add(docId);
+    setHelpers((prev) => [newHelper, ...prev]);
+    void upsertHelperToFirestore(newHelper)
+      .then(() => {
+        pendingHelperIdsRef.current.delete(docId);
+        setSyncError(null);
+      })
+      .catch((err) => {
+        console.error('Erro ao salvar ajudante no Firestore:', err);
+        setSyncError(
+          'Não foi possível sincronizar o contato na nuvem agora. Ele foi mantido localmente.'
+        );
+      });
+  };
+
+  const syncHelperToCloud = (helper: PotentialHelperRecord, failMessage: string) => {
+    const docId = normalizeDocId(helper.id);
+    pendingHelperIdsRef.current.add(docId);
+    void upsertHelperToFirestore(helper)
+      .then(() => {
+        pendingHelperIdsRef.current.delete(docId);
+        setSyncError(null);
+      })
+      .catch((err) => {
+        console.error('Erro ao sincronizar ajudante no Firestore:', err);
+        setSyncError(failMessage);
+      });
   };
 
   const handleAddHelper = (helper: PotentialHelperRecord) => {
-    setHelpers((prev) => [helper, ...prev]);
+    const nowIso = new Date().toISOString();
+    const newHelper: PotentialHelperRecord = {
+      ...helper,
+      savedAt: helper.savedAt || nowIso,
+      updatedAt: nowIso,
+    };
+    setHelpers((prev) => [newHelper, ...prev]);
+    syncHelperToCloud(
+      newHelper,
+      'Não foi possível sincronizar o contato na nuvem agora. Ele foi mantido localmente.'
+    );
   };
 
   const handleUpdateHelper = (
     id: string,
     patch: Partial<PotentialHelperRecord>
   ) => {
+    const target = helpers.find((h) => h.id === id);
+    if (!target) return;
+    const updatedHelper: PotentialHelperRecord = {
+      ...target,
+      ...patch,
+      id: target.id,
+      updatedAt: new Date().toISOString(),
+    };
     setHelpers((prev) =>
-      prev.map((h) => (h.id === id ? { ...h, ...patch, id: h.id } : h))
+      prev.map((h) => (h.id === id ? updatedHelper : h))
+    );
+    syncHelperToCloud(
+      updatedHelper,
+      'Não foi possível sincronizar o ajudante na nuvem agora. Seus dados locais foram preservados.'
     );
   };
 
@@ -1080,7 +1514,20 @@ export default function App() {
   };
 
   const handleDeleteHelper = (id: string) => {
+    const docId = normalizeDocId(id);
+    deletedHelperIdsRef.current.add(docId);
+    pendingHelperIdsRef.current.delete(docId);
     setHelpers((prev) => prev.filter((h) => h.id !== id));
+    void deleteHelperFromFirestore(id)
+      .then(() => {
+        setSyncError(null);
+      })
+      .catch((err) => {
+        console.error('Erro ao excluir ajudante no Firestore:', err);
+        setSyncError(
+          'Não foi possível confirmar a exclusão do contato na nuvem agora.'
+        );
+      });
   };
 
   const handleOpenNegotiation = (id: string) => {
@@ -1101,196 +1548,265 @@ export default function App() {
   if (!authStatus.authenticated) {
     return (
       <AuthGate
-        mode={authStatus.mode}
         onAuthenticated={() =>
-          setAuthStatus((prev) => ({ ...prev, authenticated: true }))
+          setAuthStatus((prev) => ({
+            ...prev,
+            checking: false,
+            authenticated: true,
+          }))
         }
       />
     );
   }
 
+  const pageHeaderMeta: Record<ActiveTab, { title: string; subtitle: string }> = {
+    calculadora: {
+      title: 'Calculadora de Orçamento',
+      subtitle: 'Monte a proposta com tabela oficial e copie pronta em inglês.',
+    },
+    negociacao: {
+      title: 'Negociação e Leads',
+      subtitle: 'Follow-ups do dia, conversas e Copiloto comercial.',
+    },
+    agenda: {
+      title: 'Google Agenda',
+      subtitle: 'Horários sincronizados e agendamento direto de limpezas.',
+    },
+    painel: {
+      title: 'Painel e Histórico',
+      subtitle: 'Desempenho comercial, conversões e lista completa de leads.',
+    },
+    configuracoes: {
+      title: 'Configurações',
+      subtitle: 'Tabela de preços, extras, cidades atendidas e backup.',
+    },
+  };
+
+  const navItems: Array<{
+    id: ActiveTab;
+    label: string;
+    mobileLabel: string;
+    icon: ComponentType<{ className?: string }>;
+    badgeCount?: number;
+    statusLabel?: string;
+    onSelect: () => void;
+  }> = [
+    {
+      id: 'calculadora',
+      label: 'Calculadora',
+      mobileLabel: 'Calcular',
+      icon: Calculator,
+      onSelect: () => runWithSettingsGuard(() => setActiveTab('calculadora')),
+    },
+    {
+      id: 'negociacao',
+      label: 'Negociação',
+      mobileLabel: 'Leads',
+      icon: MessageSquare,
+      badgeCount: dueTodayCount,
+      onSelect: () =>
+        runWithSettingsGuard(() => {
+          setSelectedNegotiationLeadId(null);
+          setActiveTab('negociacao');
+        }),
+    },
+    {
+      id: 'agenda',
+      label: 'Agenda',
+      mobileLabel: 'Agenda',
+      icon: Calendar,
+      statusLabel: calendarToken ? 'Ativa' : undefined,
+      onSelect: () => runWithSettingsGuard(() => setActiveTab('agenda')),
+    },
+    {
+      id: 'painel',
+      label: 'Painel e Histórico',
+      mobileLabel: 'Painel',
+      icon: BarChart3,
+      onSelect: () => runWithSettingsGuard(() => setActiveTab('painel')),
+    },
+    {
+      id: 'configuracoes',
+      label: 'Configurações',
+      mobileLabel: 'Ajustes',
+      icon: Settings,
+      onSelect: () => runWithSettingsGuard(() => setActiveTab('configuracoes')),
+    },
+  ];
+
+  const userInitial = (authStatus.userEmail || 'D').charAt(0).toUpperCase();
+
   return (
     <OptionalMapsProvider mapsApiKey={mapsApiKey}>
-      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 overflow-x-hidden">
-      {/* Top Bar Contract (3 zonas: Marca, Links, 1 Ação Primária) */}
-      <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-3 sm:gap-8">
-          <button
-            type="button"
-            onClick={() =>
-              runWithSettingsGuard(() => setActiveTab('calculadora'))
-            }
-            className="min-w-0 flex-1 sm:flex-initial text-sm sm:text-lg font-bold tracking-tight text-[#0B6273] text-left truncate"
-          >
-            Dany Clean Pro — Calculadora de Orçamento
-          </button>
-
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
+      <div className="min-h-screen flex bg-[#F3F6F7] text-slate-900 overflow-x-hidden">
+        {/* Sidebar executiva fixa (desktop) */}
+        <aside className="hidden lg:flex lg:flex-col lg:w-[252px] lg:shrink-0 lg:sticky lg:top-0 lg:h-screen bg-[#0C232B] text-slate-100 border-r border-slate-900/20">
+          <div className="h-16 px-5 flex items-center gap-3 border-b border-white/10">
             <button
               type="button"
               onClick={() =>
                 runWithSettingsGuard(() => setActiveTab('calculadora'))
               }
-              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
-                activeTab === 'calculadora'
-                  ? 'border-[#0B6273] text-[#0B6273]'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
+              className="flex items-center gap-3 text-left min-w-0"
             >
-              Calculadora
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                runWithSettingsGuard(() => {
-                  setSelectedNegotiationLeadId(null);
-                  setActiveTab('negociacao');
-                })
-              }
-              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 ${
-                activeTab === 'negociacao'
-                  ? 'border-[#0B6273] text-[#0B6273]'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <span>Negociação</span>
-              {dueTodayCount > 0 && (
-                <span className="px-1.5 py-0.5 text-[11px] font-bold rounded-md bg-[#0B6273] text-white font-mono tabular-nums">
-                  {dueTodayCount}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => runWithSettingsGuard(() => setActiveTab('agenda'))}
-              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 ${
-                activeTab === 'agenda'
-                  ? 'border-[#0B6273] text-[#0B6273]'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <span>Agenda</span>
-              {calendarToken && (
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => runWithSettingsGuard(() => setActiveTab('painel'))}
-              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
-                activeTab === 'painel'
-                  ? 'border-[#0B6273] text-[#0B6273]'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Painel e Histórico
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                runWithSettingsGuard(() => setActiveTab('configuracoes'))
-              }
-              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
-                activeTab === 'configuracoes'
-                  ? 'border-[#0B6273] text-[#0B6273]'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Configurações
-            </button>
-          </nav>
-
-          <div className="shrink-0">
-            <button
-              type="button"
-              onClick={handleNewQuote}
-              className="h-9 sm:h-10 px-3 sm:px-4 rounded-lg bg-[#0B6273] text-white text-xs sm:text-sm font-medium hover:bg-[#084E5C] transition-colors whitespace-nowrap shrink-0"
-            >
-              Novo orçamento
+              <span className="w-9 h-9 rounded-xl bg-[#0B6273] border border-white/15 flex items-center justify-center font-display font-bold text-xs tracking-tight text-white shrink-0">
+                DC
+              </span>
+              <span className="font-display font-bold text-base tracking-tight text-white truncate whitespace-nowrap">
+                Dany Clean Pro
+              </span>
             </button>
           </div>
-        </div>
 
-        {/* Navegação mobile compacta */}
-        <div className="md:hidden border-t border-slate-100 grid grid-cols-5 text-[11px] font-medium">
-          <button
-            type="button"
-            onClick={() =>
-              runWithSettingsGuard(() => setActiveTab('calculadora'))
-            }
-            className={`min-h-[42px] px-1 flex items-center justify-center text-center leading-tight border-b-2 transition-colors ${
-              activeTab === 'calculadora'
-                ? 'border-[#0B6273] text-[#0B6273] font-semibold bg-[#F0F7F9]/60'
-                : 'border-transparent text-slate-600'
-            }`}
+          <nav
+            aria-label="Navegação principal"
+            className="flex-1 px-3 py-4 space-y-1 overflow-y-auto"
           >
-            Calcular
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              runWithSettingsGuard(() => {
-                setSelectedNegotiationLeadId(null);
-                setActiveTab('negociacao');
-              })
-            }
-            className={`min-h-[42px] px-1 flex items-center justify-center gap-1 text-center leading-tight border-b-2 transition-colors ${
-              activeTab === 'negociacao'
-                ? 'border-[#0B6273] text-[#0B6273] font-semibold bg-[#F0F7F9]/60'
-                : 'border-transparent text-slate-600'
-            }`}
-          >
-            <span>Leads</span>
-            {dueTodayCount > 0 && (
-              <span className="px-1 py-0.2 text-[10px] font-bold rounded bg-[#0B6273] text-white font-mono">
-                {dueTodayCount}
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={item.onSelect}
+                  className={`w-full flex items-center justify-between gap-2.5 px-3.5 h-10 rounded-xl text-sm font-medium transition-colors whitespace-nowrap ${
+                    isActive
+                      ? 'bg-[#0B6273] text-white shadow-xs'
+                      : 'text-slate-300 hover:bg-white/8 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <Icon
+                      className={`w-4 h-4 shrink-0 ${
+                        isActive ? 'text-white' : 'text-slate-400'
+                      }`}
+                    />
+                    <span className="truncate">{item.label}</span>
+                  </span>
+                  {item.badgeCount !== undefined && item.badgeCount > 0 && (
+                    <span
+                      className={`text-xs font-mono tabular-nums font-semibold shrink-0 ${
+                        isActive ? 'text-[#A9E8F2]' : 'text-[#6ED2E2]'
+                      }`}
+                    >
+                      {item.badgeCount}
+                    </span>
+                  )}
+                  {item.statusLabel && (
+                    <span className="text-[11px] font-medium text-emerald-300 shrink-0">
+                      {item.statusLabel}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Rodapé da sidebar com conta conectada e ação real de sair */}
+          <div className="p-3.5 border-t border-white/10">
+            <div className="flex items-center justify-between gap-2.5 px-2 py-1.5">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-white/10 text-white font-display font-semibold text-xs flex items-center justify-center shrink-0">
+                  {userInitial}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-white truncate">
+                    {authStatus.userEmail || 'Equipe autorizada'}
+                  </div>
+                  <div className="text-[11px] text-slate-400">Conta ativa</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void signOutPrimarySession()}
+                title="Sair da conta"
+                aria-label="Sair da conta"
+                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        {/* Área principal do back-office */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          {/* Top bar enxuta */}
+          <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200/80">
+            <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-4">
+              <div className="min-w-0 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    runWithSettingsGuard(() => setActiveTab('calculadora'))
+                  }
+                  className="lg:hidden w-8 h-8 rounded-lg bg-[#0C232B] text-white font-display font-bold text-xs flex items-center justify-center shrink-0"
+                  aria-label="Ir para Calculadora"
+                >
+                  DC
+                </button>
+                <div className="min-w-0">
+                  <h1 className="text-sm sm:text-base font-bold tracking-tight text-slate-900 truncate">
+                    {pageHeaderMeta[activeTab].title}
+                  </h1>
+                  <p className="hidden sm:block text-xs text-slate-500 truncate">
+                    {pageHeaderMeta[activeTab].subtitle}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleNewQuote}
+                  className="inline-flex items-center gap-1.5 h-9 sm:h-10 px-3.5 sm:px-4 rounded-xl bg-[#0B6273] text-white text-xs sm:text-sm font-medium hover:bg-[#084E5C] transition-colors whitespace-nowrap shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Novo orçamento</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void signOutPrimarySession()}
+                  title="Sair da conta"
+                  aria-label="Sair da conta"
+                  className="lg:hidden inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors shrink-0"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <main className="flex-1 max-w-[1380px] w-full mx-auto px-3.5 sm:px-6 lg:px-8 pt-5 pb-24 lg:py-7">
+        {syncError && (
+          <div className="mb-5 p-3.5 rounded-2xl bg-amber-50 border border-amber-300 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 text-xs sm:text-sm text-amber-950">
+              <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>{syncError}</span>
+            </div>
+            <button
+              type="button"
+              disabled={syncRetrying}
+              onClick={() => {
+                setSyncRetrying(true);
+                setSyncRetryNonce((n) => n + 1);
+              }}
+              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl bg-[#0B6273] text-white text-xs font-semibold hover:bg-[#084E5C] disabled:opacity-60 shrink-0"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${syncRetrying ? 'animate-spin' : ''}`}
+              />
+              <span>
+                {syncRetrying
+                  ? 'Sincronizando...'
+                  : 'Tentar sincronizar novamente'}
               </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => runWithSettingsGuard(() => setActiveTab('agenda'))}
-            className={`min-h-[42px] px-1 flex items-center justify-center gap-1 text-center leading-tight border-b-2 transition-colors ${
-              activeTab === 'agenda'
-                ? 'border-[#0B6273] text-[#0B6273] font-semibold bg-[#F0F7F9]/60'
-                : 'border-transparent text-slate-600'
-            }`}
-          >
-            <span>Agenda</span>
-            {calendarToken && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => runWithSettingsGuard(() => setActiveTab('painel'))}
-            className={`min-h-[42px] px-1 flex items-center justify-center text-center leading-tight border-b-2 transition-colors ${
-              activeTab === 'painel'
-                ? 'border-[#0B6273] text-[#0B6273] font-semibold bg-[#F0F7F9]/60'
-                : 'border-transparent text-slate-600'
-            }`}
-          >
-            Histórico
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              runWithSettingsGuard(() => setActiveTab('configuracoes'))
-            }
-            className={`min-h-[42px] px-1 flex items-center justify-center text-center leading-tight border-b-2 transition-colors ${
-              activeTab === 'configuracoes'
-                ? 'border-[#0B6273] text-[#0B6273] font-semibold bg-[#F0F7F9]/60'
-                : 'border-transparent text-slate-600'
-            }`}
-          >
-            Ajustes
-          </button>
-        </div>
-      </header>
-
-      <main className="flex-1 max-w-6xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-8">
+            </button>
+          </div>
+        )}
         {backupOverdue && activeTab !== 'configuracoes' && (
-          <div className="mb-4 sm:mb-6 p-3.5 rounded-xl bg-amber-50 border border-amber-300 flex flex-wrap items-center justify-between gap-3">
+          <div className="mb-5 p-3.5 rounded-2xl bg-amber-50 border border-amber-300 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 text-xs sm:text-sm text-amber-900">
               <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
               <span>
@@ -1303,7 +1819,7 @@ export default function App() {
             <button
               type="button"
               onClick={handleExportBackup}
-              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-[#0B6273] text-white text-xs font-semibold hover:bg-[#084E5C] shrink-0"
+              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl bg-[#0B6273] text-white text-xs font-semibold hover:bg-[#084E5C] shrink-0"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Exportar backup</span>
@@ -1315,173 +1831,180 @@ export default function App() {
             scopeLabel="a Calculadora"
             onResetScope={() => setActiveTab('calculadora')}
           >
-            <div className="space-y-4 sm:space-y-6">
-              <LeadMessageParserBox
-                text={leadPasteText}
-                isParsing={isParsingLead}
-                error={parseLeadError}
-                parsedSummary={parseLeadSummary}
-                parseSourceBadge={parseSourceBadge}
-                onChangeText={(value) => {
-                  setLeadPasteText(value);
-                  setParseLeadError(null);
-                }}
-                onParse={handleParseLead}
-                onClear={() => {
-                  setLeadPasteText('');
-                  setParseLeadError(null);
-                  setParseLeadSummary(null);
-                  setParseSourceBadge(null);
-                }}
-              />
+            <div className="space-y-5 sm:space-y-6">
+            <QuickQuoteCard
+              input={input}
+              calc={calc}
+              finalPrimaryPrice={finalPrimaryPrice}
+              finalRecurringPrice={finalRecurringPrice}
+              deepCleanRangeMarginPercent={config.deepCleanRangeMarginPercent}
+              servedCities={config.servedCities}
+              cityFixedDays={config.cityFixedDays}
+              onChangeInput={(updater) => {
+                setInput(updater);
+                setJustSaved(false);
+              }}
+              onSaveToHistory={handleSaveToHistory}
+              justSaved={justSaved}
+              saveError={saveError}
+              teamWhatsAppNumbers={config.teamWhatsAppNumbers}
+            />
 
-              <QuickQuoteCard
-                input={input}
-                calc={calc}
-                finalPrimaryPrice={finalPrimaryPrice}
-                finalRecurringPrice={finalRecurringPrice}
-                deepCleanRangeMarginPercent={config.deepCleanRangeMarginPercent}
-                servedCities={config.servedCities}
-                cityFixedDays={config.cityFixedDays}
-                onChangeInput={(updater) => {
-                  setInput(updater);
-                  setJustSaved(false);
-                }}
-                onSaveToHistory={handleSaveToHistory}
-                justSaved={justSaved}
-                saveError={saveError}
-                teamWhatsAppNumbers={config.teamWhatsAppNumbers}
-              />
+            <SmartScheduleSuggestions
+              leadCity={input.city}
+              leadZip={input.zipCode}
+              leadStreetAddress={input.streetAddress}
+              cityFixedDays={config.cityFixedDays}
+              defaultDay1={input.dayOption1 || config.defaultDayOption1}
+              defaultDay2={input.dayOption2 || config.defaultDayOption2}
+              calendarIntegration={calendarIntegration}
+              homeStartAddress={config.homeStartAddress}
+            />
 
-              <SmartScheduleSuggestions
-                leadCity={input.city}
-                leadZip={input.zipCode}
-                leadStreetAddress={input.streetAddress}
-                cityFixedDays={config.cityFixedDays}
-                defaultDay1={input.dayOption1 || config.defaultDayOption1}
-                defaultDay2={input.dayOption2 || config.defaultDayOption2}
-                calendarIntegration={calendarIntegration}
-                homeStartAddress={config.homeStartAddress}
-              />
-
-              <button
-                type="button"
-                onClick={() => setShowMoreDetails((v) => !v)}
-                aria-expanded={showMoreDetails}
-                aria-controls="maisDetalhes"
-                className="w-full flex items-center justify-between gap-3 h-12 px-4 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors"
-              >
-                <span>
-                  Mais detalhes
-                  <span className="ml-2 text-xs font-normal text-slate-500">
-                    campos, preço, fotos e datas
-                  </span>
+            <button
+              type="button"
+              onClick={() => setShowMoreDetails((v) => !v)}
+              aria-expanded={showMoreDetails}
+              aria-controls="maisDetalhes"
+              className="w-full flex items-center justify-between gap-3 h-12 px-4 rounded-2xl border border-slate-200/90 bg-white text-sm font-semibold text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-slate-50 transition-colors"
+            >
+              <span>
+                Mais detalhes
+                <span className="ml-2 text-xs font-normal text-slate-500">
+                  campos, preço, fotos e datas
                 </span>
-                <ChevronDown
-                  className={`w-5 h-5 text-slate-500 transition-transform ${
-                    showMoreDetails ? 'rotate-180' : ''
-                  }`}
+              </span>
+              <ChevronDown
+                className={`w-5 h-5 text-slate-500 transition-transform ${
+                  showMoreDetails ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+
+            <div
+              id="maisDetalhes"
+              hidden={!showMoreDetails}
+              className="grid grid-cols-1 xl:grid-cols-12 gap-5 sm:gap-6 items-start"
+            >
+              {/* Coluna esquerda: entrada de dados e análise de fotos */}
+              <div className="xl:col-span-7 space-y-5 sm:space-y-6 min-w-0">
+                <LeadMessageParserBox
+                  text={leadPasteText}
+                  isParsing={isParsingLead}
+                  error={parseLeadError}
+                  parsedSummary={parseLeadSummary}
+                  parseSourceBadge={parseSourceBadge}
+                  onChangeText={(value) => {
+                    setLeadPasteText(value);
+                    setParseLeadError(null);
+                  }}
+                  onParse={handleParseLead}
+                  onClear={() => {
+                    setLeadPasteText('');
+                    setParseLeadError(null);
+                    setParseLeadSummary(null);
+                    setParseSourceBadge(null);
+                  }}
                 />
-              </button>
 
-              <div
-                id="maisDetalhes"
-                hidden={!showMoreDetails}
-                className="space-y-4 sm:space-y-6"
-              >
-              <LeadInputLayer
-                input={input}
-                config={config}
-                calc={calc}
-                photos={photos}
-                missingFields={missingFields}
-                mapsApiKey={mapsApiKey}
-                mapsInsight={mapsInsight}
-                onMapsInsightChange={setMapsInsight}
-                onClearMissingField={clearMissingField}
-                onChange={(updater) => {
-                  setInput(updater);
-                  setJustSaved(false);
-                }}
-                onAddPhotos={(newPhotos) => {
-                  setPhotos((prev) => [...prev, ...newPhotos].slice(0, 8));
-                  setAnalysisError(null);
-                }}
-                onRemovePhoto={(id) => {
-                  setPhotos((prev) => prev.filter((p) => p.id !== id));
-                  setAnalysisError(null);
-                }}
-              />
+                <LeadInputLayer
+                  input={input}
+                  config={config}
+                  calc={calc}
+                  photos={photos}
+                  missingFields={missingFields}
+                  mapsApiKey={mapsApiKey}
+                  mapsInsight={mapsInsight}
+                  onMapsInsightChange={setMapsInsight}
+                  onClearMissingField={clearMissingField}
+                  onChange={(updater) => {
+                    setInput(updater);
+                    setJustSaved(false);
+                  }}
+                  onAddPhotos={(newPhotos) => {
+                    setPhotos((prev) => [...prev, ...newPhotos].slice(0, 8));
+                    setAnalysisError(null);
+                  }}
+                  onRemovePhoto={(id) => {
+                    setPhotos((prev) => prev.filter((p) => p.id !== id));
+                    setAnalysisError(null);
+                  }}
+                />
 
-              <PricingEngineLayer
-                calc={calc}
-                serviceType={input.serviceType}
-                deepCleanRangeMarginPercent={config.deepCleanRangeMarginPercent}
-                promoPercent={input.promoPercent}
-                promoName={input.promoName}
-                onChangePromoPercent={(value) => {
-                  setInput((prev) => ({ ...prev, promoPercent: value }));
-                  setCustomPrimaryPrice(null);
-                  setJustSaved(false);
-                }}
-                onChangePromoName={(value) => {
-                  setInput((prev) => ({ ...prev, promoName: value }));
-                  setJustSaved(false);
-                }}
-                finalPrimaryPrice={finalPrimaryPrice}
-                isPrimaryCustom={customPrimaryPrice !== null}
-                onChangeFinalPrimary={(val) => {
-                  setCustomPrimaryPrice(val);
-                  setJustSaved(false);
-                }}
-                onResetPrimaryToTable={() => setCustomPrimaryPrice(null)}
-                finalRecurringPrice={finalRecurringPrice}
-                isRecurringCustom={customRecurringPrice !== null}
-                onChangeFinalRecurring={(val) => {
-                  setCustomRecurringPrice(val);
-                  setJustSaved(false);
-                }}
-                onResetRecurringToTable={() => setCustomRecurringPrice(null)}
-              />
-
-              <PhotoAnalysisLayer
-                photos={photos}
-                analysis={analysis}
-                isAnalyzing={isAnalyzing}
-                error={analysisError}
-                isVisitaAvulsa={input.serviceType === 'visita_avulsa'}
-                onAnalyze={handleAnalyzePhotos}
-                onApplyEstado={(estado) =>
-                  setInput((prev) => ({ ...prev, houseCondition: estado }))
-                }
-              />
-
-              <MessageAndHistoryLayer
-                input={input}
-                calc={calc}
-                finalPrimaryPrice={finalPrimaryPrice}
-                finalRecurringPrice={finalRecurringPrice}
-                deepCleanRangeMarginPercent={config.deepCleanRangeMarginPercent}
-                servedCities={config.servedCities}
-                cityFixedDays={config.cityFixedDays}
-                onChangeDays={(day1, day2) =>
-                  setInput((prev) => ({
-                    ...prev,
-                    dayOption1: day1,
-                    dayOption2: day2,
-                  }))
-                }
-                onSaveToHistory={handleSaveToHistory}
-                onSaveAndOpenConversation={handleSaveAndOpenConversation}
-                onOpenLastSavedConversation={
-                  lastSavedLeadId
-                    ? () => handleOpenNegotiation(lastSavedLeadId)
-                    : undefined
-                }
-                justSaved={justSaved}
-                saveError={saveError}
-              />
+                <PhotoAnalysisLayer
+                  photos={photos}
+                  analysis={analysis}
+                  isAnalyzing={isAnalyzing}
+                  error={analysisError}
+                  isVisitaAvulsa={input.serviceType === 'visita_avulsa'}
+                  onAnalyze={handleAnalyzePhotos}
+                  onApplyEstado={(estado) =>
+                    setInput((prev) => ({ ...prev, houseCondition: estado }))
+                  }
+                />
               </div>
+
+              {/* Coluna direita fixa (sticky no desktop): resumo do orçamento + proposta pronta */}
+              <div className="xl:col-span-5 xl:sticky xl:top-[84px] space-y-5 sm:space-y-6 min-w-0">
+                <PricingEngineLayer
+                  calc={calc}
+                  serviceType={input.serviceType}
+                  deepCleanRangeMarginPercent={config.deepCleanRangeMarginPercent}
+                  promoPercent={input.promoPercent}
+                  promoName={input.promoName}
+                  onChangePromoPercent={(value) => {
+                    setInput((prev) => ({ ...prev, promoPercent: value }));
+                    setCustomPrimaryPrice(null);
+                    setJustSaved(false);
+                  }}
+                  onChangePromoName={(value) => {
+                    setInput((prev) => ({ ...prev, promoName: value }));
+                    setJustSaved(false);
+                  }}
+                  finalPrimaryPrice={finalPrimaryPrice}
+                  isPrimaryCustom={customPrimaryPrice !== null}
+                  onChangeFinalPrimary={(val) => {
+                    setCustomPrimaryPrice(val);
+                    setJustSaved(false);
+                  }}
+                  onResetPrimaryToTable={() => setCustomPrimaryPrice(null)}
+                  finalRecurringPrice={finalRecurringPrice}
+                  isRecurringCustom={customRecurringPrice !== null}
+                  onChangeFinalRecurring={(val) => {
+                    setCustomRecurringPrice(val);
+                    setJustSaved(false);
+                  }}
+                  onResetRecurringToTable={() => setCustomRecurringPrice(null)}
+                />
+
+                <MessageAndHistoryLayer
+                  input={input}
+                  calc={calc}
+                  finalPrimaryPrice={finalPrimaryPrice}
+                  finalRecurringPrice={finalRecurringPrice}
+                  deepCleanRangeMarginPercent={config.deepCleanRangeMarginPercent}
+                  servedCities={config.servedCities}
+                  cityFixedDays={config.cityFixedDays}
+                  calendarAvailability={calculatorCalendarAvailability}
+                  onChangeDays={(day1, day2) =>
+                    setInput((prev) => ({
+                      ...prev,
+                      dayOption1: day1,
+                      dayOption2: day2,
+                    }))
+                  }
+                  onSaveToHistory={handleSaveToHistory}
+                  onSaveAndOpenConversation={handleSaveAndOpenConversation}
+                  onOpenLastSavedConversation={
+                    lastSavedLeadId
+                      ? () => handleOpenNegotiation(lastSavedLeadId)
+                      : undefined
+                  }
+                  justSaved={justSaved}
+                  saveError={saveError}
+                />
+              </div>
+            </div>
             </div>
           </ErrorBoundary>
         )}
@@ -1527,6 +2050,7 @@ export default function App() {
               selectedCalendarId={selectedCalendarId}
               events={calendarEvents}
               onSignIn={handleCalendarSignIn}
+              onSignInFallback={handleCalendarSignInFallback}
               onLogout={handleCalendarLogout}
               onSelectCalendar={handleSelectCalendar}
               onRefresh={handleRefreshCalendar}
@@ -1548,6 +2072,7 @@ export default function App() {
           >
             <DashboardAndHistoryView
               records={history}
+              config={config}
               onUpdateStatus={handleUpdateStatus}
               onDeleteRecord={handleDeleteRecord}
               onOpenNegotiation={handleOpenNegotiation}
@@ -1573,9 +2098,48 @@ export default function App() {
           </ErrorBoundary>
         )}
       </main>
+        </div>
 
-      {/* Modal de confirmação ao sair de Ajustes com alterações não salvas */}
-      {pendingNavAction && (
+        {/* Barra de navegação inferior (mobile e tablet) */}
+        <nav
+          aria-label="Navegação móvel"
+          className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200/90 pb-[env(safe-area-inset-bottom)]"
+        >
+          <div className="grid grid-cols-5 h-16 max-w-lg mx-auto px-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={item.onSelect}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`relative flex flex-col items-center justify-center gap-1 rounded-lg transition-colors ${
+                    isActive
+                      ? 'text-[#0B6273] font-semibold'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <span className="relative inline-flex items-center justify-center">
+                    <Icon className="w-5 h-5" />
+                    {item.badgeCount !== undefined && item.badgeCount > 0 && (
+                      <span className="absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 rounded-full bg-[#0B6273] text-white text-[10px] font-mono font-bold tabular-nums flex items-center justify-center leading-none">
+                        {item.badgeCount > 99 ? '99+' : item.badgeCount}
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-[11px] leading-none truncate max-w-full px-0.5">
+                    {item.mobileLabel}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+
+        {/* Modal de confirmação ao sair de Ajustes com alterações não salvas */}
+        {pendingNavAction && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-lg">
             <div className="flex items-start gap-3">
