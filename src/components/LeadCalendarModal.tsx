@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { AlertTriangle, CalendarPlus, Check, X } from 'lucide-react';
 import {
+  DEFAULT_PRICING_CONFIG,
   FREQUENCY_LABELS,
   SERVICE_TYPE_LABELS,
 } from '../data/defaultPricing';
-import { LeadQuoteRecord } from '../types/pricing';
+import { LeadQuoteRecord, PricingConfig } from '../types/pricing';
 import {
   CreateCalendarEventInput,
   GoogleCalendarEvent,
@@ -12,9 +13,11 @@ import {
   formatCalendarEventTimeRange,
 } from '../utils/googleCalendarApi';
 import { formatDateBr } from '../utils/negotiationEngine';
+import { resolveLeadPricingSummary } from '../utils/pricingEngine';
 
 interface LeadCalendarModalProps {
   lead: LeadQuoteRecord;
+  config?: PricingConfig;
   defaultDateKey: string;
   calendarName: string;
   existingEvents: GoogleCalendarEvent[];
@@ -24,6 +27,7 @@ interface LeadCalendarModalProps {
 
 export const LeadCalendarModal: React.FC<LeadCalendarModalProps> = ({
   lead,
+  config = DEFAULT_PRICING_CONFIG,
   defaultDateKey,
   calendarName,
   existingEvents,
@@ -35,6 +39,18 @@ export const LeadCalendarModal: React.FC<LeadCalendarModalProps> = ({
       ? `${SERVICE_TYPE_LABELS.recorrente} (${FREQUENCY_LABELS[lead.frequency]})`
       : SERVICE_TYPE_LABELS[lead.serviceType];
 
+  const pricing = resolveLeadPricingSummary(lead, config);
+  const priceDescriptionLines = pricing.isRecurring
+    ? [
+        `Valor 1ª limpeza (inicial): $${pricing.initialPrice}`,
+        `Valor recorrente (${pricing.frequencyLabelPt ?? 'recorrente'}): ${
+          pricing.recurringPrice !== null
+            ? `$${pricing.recurringPrice}/visita`
+            : 'a confirmar'
+        }`,
+      ]
+    : [`Valor combinado: $${pricing.initialPrice}`];
+
   const defaultSummary = `Limpeza - ${lead.clientName || 'Cliente'} (${lead.city || 'CT'})`;
   const defaultLocation = [lead.streetAddress, lead.city, lead.zipCode]
     .filter((v) => Boolean(v && v.trim()))
@@ -44,7 +60,7 @@ export const LeadCalendarModal: React.FC<LeadCalendarModalProps> = ({
     lead.phone ? `Telefone: ${lead.phone}` : '',
     `Imóvel: ${lead.effectiveHouseLabel || lead.houseLabel}`,
     `Serviço: ${serviceLabel}`,
-    `Valor combinado: $${lead.finalPricePrimary}`,
+    ...priceDescriptionLines,
     lead.notes ? `Observações: ${lead.notes}` : '',
   ]
     .filter(Boolean)

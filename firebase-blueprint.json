@@ -1,0 +1,606 @@
+{
+  "entities": {
+    "Workspace": {
+      "title": "Workspace",
+      "description": "Shared Dany Clean Pro business workspace root document.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "ownerEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "recordVersion": {
+          "type": "integer"
+        },
+        "updatedByEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "name",
+        "ownerEmail",
+        "schemaVersion",
+        "recordVersion",
+        "updatedByEmail",
+        "serverUpdatedAt"
+      ]
+    },
+    "PricingSettingsDoc": {
+      "title": "PricingSettingsDoc",
+      "description": "Commercial pricing table, service rules, cities, and company facts.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "recordVersion": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedByEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "tiers": {
+          "type": "array"
+        },
+        "moveInOutPercent": {
+          "type": "number"
+        },
+        "conditionModeratePercent": {
+          "type": "number"
+        },
+        "conditionHeavyPercent": {
+          "type": "number"
+        },
+        "petOnePrice": {
+          "type": "number"
+        },
+        "petTwoPlusPrice": {
+          "type": "number"
+        },
+        "deepCleanRangeMarginPercent": {
+          "type": "number"
+        },
+        "defaultDayOption1": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "defaultDayOption2": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "cityFixedDays": {
+          "type": "array"
+        },
+        "serviceBaseLocation": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "serviceMaxRadiusMiles": {
+          "type": "number"
+        },
+        "servedCities": {
+          "type": "array"
+        },
+        "companyFacts": {
+          "type": "string",
+          "maxLength": 12000
+        },
+        "extras": {
+          "type": "object"
+        },
+        "visitaAvulsa": {
+          "type": "object"
+        },
+        "negotiation": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "schemaVersion",
+        "recordVersion",
+        "updatedAt",
+        "serverUpdatedAt",
+        "updatedByEmail",
+        "tiers",
+        "moveInOutPercent",
+        "conditionModeratePercent",
+        "conditionHeavyPercent",
+        "petOnePrice",
+        "petTwoPlusPrice",
+        "deepCleanRangeMarginPercent",
+        "defaultDayOption1",
+        "defaultDayOption2",
+        "cityFixedDays",
+        "serviceBaseLocation",
+        "serviceMaxRadiusMiles",
+        "servedCities",
+        "companyFacts",
+        "extras",
+        "visitaAvulsa",
+        "negotiation"
+      ]
+    },
+    "LeadQuoteDoc": {
+      "title": "LeadQuoteDoc",
+      "description": "Persisted lead, quote calculation, negotiation state, and Copilot interaction history.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "recordVersion": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedByEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "clientName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "streetAddress": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "zipCode": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "desiredDate": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "bestContact": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "origin": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "adCode": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 6000
+        },
+        "squareFeet": {
+          "type": "number"
+        },
+        "houseLabel": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "effectiveHouseLabel": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "serviceType": {
+          "type": "string",
+          "enum": [
+            "recorrente",
+            "primeira_avulsa",
+            "deep_clean",
+            "move_in_out",
+            "visita_avulsa"
+          ]
+        },
+        "frequency": {
+          "type": "string"
+        },
+        "visitaAvulsaOption": {
+          "type": "string"
+        },
+        "houseCondition": {
+          "type": "string"
+        },
+        "petsOption": {
+          "type": "string"
+        },
+        "tablePricePrimary": {
+          "type": "number"
+        },
+        "promoPercent": {
+          "type": "number"
+        },
+        "promoName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "finalPricePrimary": {
+          "type": "number"
+        },
+        "tablePriceRecurring": {
+          "type": "number"
+        },
+        "finalPriceRecurring": {
+          "type": "number"
+        },
+        "aiConfidence": {
+          "type": "number"
+        },
+        "aiEstado": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Enviado", "Fechou", "Perdeu"]
+        },
+        "lossReason": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "stage": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "objection": {
+          "type": "string"
+        },
+        "concession": {
+          "type": "object"
+        },
+        "followUpStep": {
+          "type": "string"
+        },
+        "nextFollowUpDate": {
+          "type": "string"
+        },
+        "firstOutboundAt": {
+          "type": "string"
+        },
+        "firstInboundAt": {
+          "type": "string"
+        },
+        "lastOutboundAt": {
+          "type": "string"
+        },
+        "lastInboundAt": {
+          "type": "string"
+        },
+        "consecutiveOutboundCount": {
+          "type": "number"
+        },
+        "blockedUntilDate": {
+          "type": "string"
+        },
+        "hibernateUntilDate": {
+          "type": "string"
+        },
+        "priceAlreadySent": {
+          "type": "boolean"
+        },
+        "lastGeneratedMessage": {
+          "type": "object"
+        },
+        "interactionHistory": {
+          "type": "array"
+        },
+        "mapsInsight": {
+          "type": "object"
+        },
+        "dayOption1": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "dayOption2": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "workspaceId",
+        "schemaVersion",
+        "recordVersion",
+        "updatedAt",
+        "serverUpdatedAt",
+        "updatedByEmail",
+        "id",
+        "createdAt",
+        "clientName",
+        "phone",
+        "email",
+        "streetAddress",
+        "zipCode",
+        "city",
+        "desiredDate",
+        "bestContact",
+        "origin",
+        "adCode",
+        "notes",
+        "squareFeet",
+        "houseLabel",
+        "effectiveHouseLabel",
+        "serviceType",
+        "frequency",
+        "visitaAvulsaOption",
+        "houseCondition",
+        "petsOption",
+        "tablePricePrimary",
+        "promoPercent",
+        "promoName",
+        "finalPricePrimary",
+        "tablePriceRecurring",
+        "finalPriceRecurring",
+        "aiConfidence",
+        "aiEstado",
+        "status",
+        "lossReason",
+        "stage",
+        "objection",
+        "concession",
+        "followUpStep",
+        "nextFollowUpDate",
+        "firstOutboundAt",
+        "firstInboundAt",
+        "lastOutboundAt",
+        "lastInboundAt",
+        "consecutiveOutboundCount",
+        "blockedUntilDate",
+        "hibernateUntilDate",
+        "priceAlreadySent",
+        "lastGeneratedMessage",
+        "interactionHistory",
+        "mapsInsight",
+        "dayOption1",
+        "dayOption2"
+      ]
+    },
+    "PotentialHelperDoc": {
+      "title": "PotentialHelperDoc",
+      "description": "Potential helper candidate extracted from a lead.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "recordVersion": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedByEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "savedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sourceLeadId": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "workspaceId",
+        "schemaVersion",
+        "recordVersion",
+        "updatedAt",
+        "serverUpdatedAt",
+        "updatedByEmail",
+        "id",
+        "name",
+        "phone",
+        "email",
+        "city",
+        "notes",
+        "savedAt",
+        "sourceLeadId"
+      ]
+    },
+    "SyncMetaDoc": {
+      "title": "SyncMetaDoc",
+      "description": "Synchronization metadata, backup timestamp, and migration verification state.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "schemaVersion": {
+          "type": "integer"
+        },
+        "recordVersion": {
+          "type": "integer"
+        },
+        "lastBackupAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "migrationCompletedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "migratedByEmail": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "migratedLeadCount": {
+          "type": "integer"
+        },
+        "migratedHelperCount": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedByEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "workspaceId",
+        "schemaVersion",
+        "recordVersion",
+        "lastBackupAt",
+        "migrationCompletedAt",
+        "migratedByEmail",
+        "migratedLeadCount",
+        "migratedHelperCount",
+        "updatedAt",
+        "serverUpdatedAt",
+        "updatedByEmail"
+      ]
+    }
+  },
+  "firestore": {
+    "/workspaces/{workspaceId}": {
+      "schema": {
+        "$ref": "#/entities/Workspace"
+      },
+      "description": "Root workspace gate for Dany Clean Pro authorized users."
+    },
+    "/workspaces/{workspaceId}/settings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/PricingSettingsDoc"
+      },
+      "description": "Commercial pricing table and business settings (doc id: pricing)."
+    },
+    "/workspaces/{workspaceId}/leads/{leadId}": {
+      "schema": {
+        "$ref": "#/entities/LeadQuoteDoc"
+      },
+      "description": "Individual leads, quotes, negotiation stages, and Copilot interaction histories."
+    },
+    "/workspaces/{workspaceId}/helpers/{helperId}": {
+      "schema": {
+        "$ref": "#/entities/PotentialHelperDoc"
+      },
+      "description": "Potential helper contacts saved from leads."
+    },
+    "/workspaces/{workspaceId}/meta/{metaId}": {
+      "schema": {
+        "$ref": "#/entities/SyncMetaDoc"
+      },
+      "description": "Backup timestamps and confirmed localStorage-to-Firestore migration status (doc id: sync)."
+    }
+  }
+}

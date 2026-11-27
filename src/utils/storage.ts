@@ -2,6 +2,7 @@ import {
   DEFAULT_CITY_FIXED_DAYS,
   DEFAULT_COMPANY_FACTS,
   DEFAULT_PRICING_CONFIG,
+  FIRESTORE_MIGRATION_STATE_KEY,
   HELPERS_DATA_VERSION,
   HELPERS_STORAGE_KEY,
   HISTORY_DATA_VERSION,
@@ -14,6 +15,7 @@ import {
   MIGRATABLE_PRICING_STORAGE_KEY_V3,
   NEGOTIATION_STAGES,
   OBJECTION_OPTIONS,
+  PRE_FIRESTORE_BACKUP_STORAGE_KEY,
   PRICING_CONFIG_VERSION,
   PRICING_STORAGE_KEY,
 } from '../data/defaultPricing';
@@ -181,6 +183,28 @@ function isValidBasePricingShape(candidate: unknown): candidate is Record<string
   return true;
 }
 
+export function sanitizeCompanyFacts(rawFacts: unknown): string {
+  const raw =
+    typeof rawFacts === 'string' && rawFacts.trim()
+      ? rawFacts
+      : DEFAULT_COMPANY_FACTS;
+  const cleaned = raw
+    .replace(/[^.\n]*\b24\s*h(?:oras?|ours?)?\b[^.\n]*(?:\.|$)/gi, ' ')
+    .replace(
+      /[^.\n]*\b(?:volt(?:ar|o|amos|aremos)|retorn(?:ar|o|amos|aremos))\b[^.\n]*\b(?:corrigir|arrumar|refazer|sem\s+custo|sem\s+cobrar|gratuit\w*|gr[aá]tis)\b[^.\n]*(?:\.|$)/gi,
+      ' '
+    )
+    .replace(
+      /[^.\n]*\bgarantia\s+(?:de\s+satisfa[cç][aã]o|de\s+24\s*h(?:oras?)?|do\s+servi[cç]o|de\s+re-?limpeza)\b[^.\n]*(?:\.|$)/gi,
+      ' '
+    )
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+\./g, '.')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return cleaned || DEFAULT_COMPANY_FACTS;
+}
+
 export function upgradePricingConfig(candidate: unknown): PricingConfig | null {
   if (!isValidBasePricingShape(candidate)) return null;
 
@@ -224,10 +248,7 @@ export function upgradePricingConfig(candidate: unknown): PricingConfig | null {
           }))
           .filter((item) => Boolean(item.city))
       : [...DEFAULT_CITY_FIXED_DAYS],
-    companyFacts:
-      typeof candidate.companyFacts === 'string' && candidate.companyFacts.trim()
-        ? candidate.companyFacts
-        : DEFAULT_COMPANY_FACTS,
+    companyFacts: sanitizeCompanyFacts(candidate.companyFacts),
     serviceBaseLocation:
       typeof candidate.serviceBaseLocation === 'string' &&
       candidate.serviceBaseLocation.trim()
@@ -248,6 +269,18 @@ export function upgradePricingConfig(candidate: unknown): PricingConfig | null {
           )
         )
       : [...DEFAULT_PRICING_CONFIG.servedCities],
+    recordVersion:
+      typeof candidate.recordVersion === 'number' &&
+      Number.isInteger(candidate.recordVersion) &&
+      candidate.recordVersion >= 1
+        ? candidate.recordVersion
+        : undefined,
+    updatedAt:
+      typeof candidate.updatedAt === 'string' ? candidate.updatedAt : undefined,
+    updatedByEmail:
+      typeof candidate.updatedByEmail === 'string'
+        ? candidate.updatedByEmail
+        : undefined,
   };
 }
 
@@ -414,16 +447,28 @@ function sanitizeInteractionHistory(raw: unknown): LeadInteractionEntry[] {
       stepRaw === 'hibernar'
         ? stepRaw
         : 2;
+    const rawKind = asString(item.kind);
+    const kind =
+      rawKind === 'initial_quote' ||
+      rawKind === 'copilot_turn' ||
+      rawKind === 'followup' ||
+      rawKind === 'client_note'
+        ? rawKind
+        : undefined;
     entries.push({
       id,
       createdAt: asString(item.createdAt, new Date().toISOString()),
       clientMessageEn: asString(item.clientMessageEn),
       clientMessagePt: asString(item.clientMessagePt),
       realIntentPt: asString(item.realIntentPt),
+      ...(typeof item.recommendedStrategyPt === 'string' && item.recommendedStrategyPt
+        ? { recommendedStrategyPt: item.recommendedStrategyPt }
+        : {}),
       objection,
       sentReplyEn: asString(item.sentReplyEn),
       sentReplyPt: asString(item.sentReplyPt),
       step,
+      ...(kind ? { kind } : {}),
     });
   }
   return entries;
@@ -655,6 +700,18 @@ export function normalizeQuoteRecord(
     mapsInsight: sanitizeMapsInsight(input.mapsInsight),
     dayOption1: asString(input.dayOption1, 'Tuesday') || 'Tuesday',
     dayOption2: asString(input.dayOption2, 'Thursday') || 'Thursday',
+    recordVersion:
+      typeof input.recordVersion === 'number' &&
+      Number.isInteger(input.recordVersion) &&
+      input.recordVersion >= 1
+        ? input.recordVersion
+        : undefined,
+    updatedAt:
+      typeof input.updatedAt === 'string' ? input.updatedAt : undefined,
+    updatedByEmail:
+      typeof input.updatedByEmail === 'string'
+        ? input.updatedByEmail
+        : undefined,
   };
 }
 
@@ -728,6 +785,15 @@ export function sanitizeHelpersList(rawList: unknown): PotentialHelperRecord[] {
       notes: asString(h.notes),
       savedAt: asString(h.savedAt, new Date().toISOString()),
       sourceLeadId: typeof h.sourceLeadId === 'string' ? h.sourceLeadId : undefined,
+      recordVersion:
+        typeof h.recordVersion === 'number' &&
+        Number.isInteger(h.recordVersion) &&
+        h.recordVersion >= 1
+          ? h.recordVersion
+          : undefined,
+      updatedAt: typeof h.updatedAt === 'string' ? h.updatedAt : undefined,
+      updatedByEmail:
+        typeof h.updatedByEmail === 'string' ? h.updatedByEmail : undefined,
     }));
 }
 
@@ -842,6 +908,69 @@ export function parseAndValidateBackupPayload(rawJson: string): {
     history: normalizedHistory,
     helpers: normalizedHelpers,
   };
+}
+
+export interface PreMigrationBackupRecord {
+  createdAt: string;
+  userEmail: string;
+  payload: AppBackupPayload;
+}
+
+export interface FirestoreMigrationLocalState {
+  completedAt: string;
+  userEmail: string;
+  leadCount: number;
+  helperCount: number;
+  externalJsonExported: boolean;
+}
+
+export function savePreMigrationLocalBackup(
+  record: PreMigrationBackupRecord
+): void {
+  safeSetItem(PRE_FIRESTORE_BACKUP_STORAGE_KEY, JSON.stringify(record));
+}
+
+export function loadPreMigrationLocalBackup(): PreMigrationBackupRecord | null {
+  try {
+    const raw = window.localStorage.getItem(PRE_FIRESTORE_BACKUP_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isPlainObject(parsed) || !isPlainObject(parsed.payload)) return null;
+    return parsed as unknown as PreMigrationBackupRecord;
+  } catch {
+    return null;
+  }
+}
+
+export function saveFirestoreMigrationState(
+  state: FirestoreMigrationLocalState
+): void {
+  safeSetItem(FIRESTORE_MIGRATION_STATE_KEY, JSON.stringify(state));
+}
+
+export function loadFirestoreMigrationState(): FirestoreMigrationLocalState | null {
+  try {
+    const raw = window.localStorage.getItem(FIRESTORE_MIGRATION_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isPlainObject(parsed) || typeof parsed.completedAt !== 'string') {
+      return null;
+    }
+    return parsed as unknown as FirestoreMigrationLocalState;
+  } catch {
+    return null;
+  }
+}
+
+export function hasLocalPricingSaved(): boolean {
+  try {
+    return Boolean(
+      window.localStorage.getItem(PRICING_STORAGE_KEY) ||
+        window.localStorage.getItem(MIGRATABLE_PRICING_STORAGE_KEY_V3)
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function clearAllSavedAppStorage(): void {

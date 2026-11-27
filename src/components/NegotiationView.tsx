@@ -10,12 +10,15 @@ import {
   Users,
 } from 'lucide-react';
 import {
+  FREQUENCY_LABELS,
+  INITIAL_LEAD_STATE,
   LEAD_ORIGIN_OPTIONS,
   NEGOTIATION_STAGES,
   OBJECTION_OPTIONS,
   SERVICE_TYPE_LABELS,
 } from '../data/defaultPricing';
 import {
+  FrequencyType,
   LeadOrigin,
   LeadQuoteRecord,
   NegotiationStage,
@@ -31,6 +34,10 @@ import {
   isLeadDueToday,
   isSeasonalPromoValid,
 } from '../utils/negotiationEngine';
+import {
+  calculateQuote,
+  resolveLeadPricingFromEngine,
+} from '../utils/pricingEngine';
 import { CalendarWorkspaceBridge } from '../utils/googleCalendarApi';
 import { NegotiationWorkspace } from './NegotiationWorkspace';
 
@@ -96,6 +103,37 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
   const [qAdCode, setQAdCode] = useState('');
   const [qTierId, setQTierId] = useState(config.tiers[3]?.id || config.tiers[0].id);
   const [qServiceType, setQServiceType] = useState<ServiceType>('recorrente');
+  const [qFrequency, setQFrequency] = useState<FrequencyType>('quinzenal');
+  const [qCustomPrimaryPrice, setQCustomPrimaryPrice] = useState<number | null>(
+    null
+  );
+  const [qCustomRecurringPrice, setQCustomRecurringPrice] = useState<
+    number | null
+  >(null);
+
+  const quickCalc = useMemo(
+    () =>
+      calculateQuote(
+        {
+          ...INITIAL_LEAD_STATE,
+          selectedTierId: qTierId,
+          serviceType: qServiceType,
+          frequency: qFrequency,
+          houseCondition: 'padrao',
+          petsOption: 'nenhum',
+          dayOption1: config.defaultDayOption1 || 'Tuesday',
+          dayOption2: config.defaultDayOption2 || 'Thursday',
+        },
+        config
+      ),
+    [qTierId, qServiceType, qFrequency, config]
+  );
+
+  const quickPrimaryPrice =
+    qCustomPrimaryPrice ?? quickCalc.effectiveDefaultPrimaryPrice;
+  const quickRecurringPrice = quickCalc.isRecurring
+    ? qCustomRecurringPrice ?? quickCalc.recurringTablePrice
+    : null;
 
   const dueTodayLeads = useMemo(() => {
     return leads.filter((l) => isLeadDueToday(l));
@@ -131,14 +169,6 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
   const handleCreateQuickLead = (e: React.FormEvent) => {
     e.preventDefault();
     if (!qName.trim() || !qOrigin) return;
-    const tier =
-      config.tiers.find((t) => t.id === qTierId) ?? config.tiers[0];
-    const basePrice =
-      qServiceType === 'deep_clean'
-        ? tier.deepClean
-        : qServiceType === 'move_in_out'
-        ? Math.round((tier.deepClean * (1 + config.moveInOutPercent / 100)) / 5) * 5
-        : tier.primeiraLimpeza;
     const today = getLocalDateString();
 
     const newLead: LeadQuoteRecord = {
@@ -154,20 +184,22 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
       origin: qOrigin,
       adCode: qOrigin === 'Facebook' ? qAdCode.trim() : '',
       notes: '',
-      squareFeet: null,
-      houseLabel: tier.label,
-      effectiveHouseLabel: tier.label,
+      squareFeet: quickCalc.parsedSqFt,
+      houseLabel: quickCalc.selectedTier.label,
+      effectiveHouseLabel: quickCalc.effectiveTier.label,
       serviceType: qServiceType,
-      frequency: qServiceType === 'recorrente' ? 'quinzenal' : null,
+      frequency: quickCalc.isRecurring ? qFrequency : null,
       visitaAvulsaOption: null,
       houseCondition: 'padrao',
       petsOption: 'nenhum',
-      tablePricePrimary: basePrice,
+      tablePricePrimary: quickCalc.primaryTablePrice,
       promoPercent: null,
       promoName: '',
-      finalPricePrimary: basePrice,
-      tablePriceRecurring: qServiceType === 'recorrente' ? tier.quinzenal : null,
-      finalPriceRecurring: qServiceType === 'recorrente' ? tier.quinzenal : null,
+      finalPricePrimary: quickPrimaryPrice,
+      tablePriceRecurring: quickCalc.isRecurring
+        ? quickCalc.recurringTablePrice
+        : null,
+      finalPriceRecurring: quickRecurringPrice,
       aiConfidence: null,
       aiEstado: null,
       status: 'Enviado',
@@ -197,6 +229,9 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
     setQCity('');
     setQOrigin('');
     setQAdCode('');
+    setQFrequency('quinzenal');
+    setQCustomPrimaryPrice(null);
+    setQCustomRecurringPrice(null);
     setShowQuickForm(false);
     onSelectLeadId(newLead.id);
   };
@@ -232,7 +267,7 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
     return (
       <div
         key={lead.id}
-        className="p-4 rounded-xl border border-slate-200 bg-white hover:border-[#0B6273]/50 transition-colors flex flex-wrap items-center justify-between gap-3"
+        className="p-4 sm:px-5 rounded-2xl border border-slate-200/90 bg-white hover:border-[#0B6273]/40 hover:bg-slate-50/40 transition-colors flex flex-wrap items-center justify-between gap-3"
       >
         <div className="space-y-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -280,9 +315,24 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
               </>
             )}
             <span className="text-slate-300">·</span>
-            <span className="font-mono font-semibold text-[#0B6273]">
-              ${lead.finalPricePrimary}
-            </span>
+            {(() => {
+              const pricing = resolveLeadPricingFromEngine(lead, config);
+              return (
+                <span className="font-mono font-semibold text-[#0B6273]">
+                  Inicial ${pricing.initialFinalPrice}
+                  {pricing.isRecurring && (
+                    <span className="text-slate-700 font-medium">
+                      {' '}
+                      · Recorrente:{' '}
+                      {pricing.recurringStatus === 'available' &&
+                      pricing.recurringFinalPrice !== null
+                        ? `$${pricing.recurringFinalPrice}/visita`
+                        : 'a confirmar'}
+                    </span>
+                  )}
+                </span>
+              );
+            })()}
             {lead.followUpStep !== 'hibernar' ? (
               <>
                 <span className="text-slate-300">·</span>
@@ -318,31 +368,31 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       {/* Cabeçalho e Sub-abas de Negociação */}
-      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
+      <section className="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div>
-            <span className="text-xs font-medium text-[#0B6273]">
-              Módulo de Negociação
-            </span>
-            <h2 className="text-lg sm:text-xl font-bold text-slate-900">
+            <h2 className="text-base sm:text-lg font-semibold text-slate-900">
               Follow-up, objeções e fechamento
             </h2>
+            {seasonalPromoActive ? (
+              <p className="text-xs text-emerald-700 font-medium mt-0.5">
+                Promoção sazonal ativa: {config.negotiation.seasonalPromo.name} (
+                {config.negotiation.seasonalPromo.percent}%)
+              </p>
+            ) : (
+              <p className="text-xs text-slate-500 mt-0.5">
+                Acompanhe retornos do dia, gerencie conversas e avance leads.
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {seasonalPromoActive && (
-              <span className="text-xs font-medium px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200">
-                Promoção sazonal ativa:{' '}
-                {config.negotiation.seasonalPromo.name} (
-                {config.negotiation.seasonalPromo.percent}%)
-              </span>
-            )}
             <button
               type="button"
               onClick={() => setShowQuickForm((v) => !v)}
-              className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg bg-[#0B6273] text-white text-xs sm:text-sm font-medium hover:bg-[#084E5C] transition-colors"
+              className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl bg-[#0B6273] text-white text-xs sm:text-sm font-medium hover:bg-[#084E5C] transition-colors whitespace-nowrap shrink-0"
             >
               <Plus className="w-4 h-4" />
               <span>Novo lead rápido</span>
@@ -410,7 +460,11 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
               )}
               <select
                 value={qTierId}
-                onChange={(e) => setQTierId(e.target.value)}
+                onChange={(e) => {
+                  setQTierId(e.target.value);
+                  setQCustomPrimaryPrice(null);
+                  setQCustomRecurringPrice(null);
+                }}
                 className="h-11 sm:h-10 px-3 rounded-lg border border-slate-300 bg-white text-base"
               >
                 {config.tiers.map((t) => (
@@ -421,9 +475,11 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
               </select>
               <select
                 value={qServiceType}
-                onChange={(e) =>
-                  setQServiceType(e.target.value as ServiceType)
-                }
+                onChange={(e) => {
+                  setQServiceType(e.target.value as ServiceType);
+                  setQCustomPrimaryPrice(null);
+                  setQCustomRecurringPrice(null);
+                }}
                 className="h-11 sm:h-10 px-3 rounded-lg border border-slate-300 bg-white text-base"
               >
                 <option value="recorrente">Recorrente</option>
@@ -431,7 +487,80 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
                 <option value="deep_clean">Deep clean</option>
                 <option value="move_in_out">Move-in/Move-out</option>
               </select>
+              {qServiceType === 'recorrente' && (
+                <select
+                  value={qFrequency}
+                  onChange={(e) => {
+                    setQFrequency(e.target.value as FrequencyType);
+                    setQCustomPrimaryPrice(null);
+                    setQCustomRecurringPrice(null);
+                  }}
+                  className="h-11 sm:h-10 px-3 rounded-lg border border-slate-300 bg-white text-base"
+                >
+                  <option value="semanal">{FREQUENCY_LABELS.semanal}</option>
+                  <option value="quinzenal">{FREQUENCY_LABELS.quinzenal}</option>
+                  <option value="mensal">{FREQUENCY_LABELS.mensal}</option>
+                </select>
+              )}
             </div>
+
+            {/* Valores separados: Preço inicial x Preço recorrente por visita (reutiliza motor da Calculadora) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="block text-xs font-semibold text-slate-700">
+                    Preço inicial (1ª limpeza)
+                  </span>
+                  <span className="block text-[11px] text-slate-500">
+                    Tabela: ${quickCalc.primaryTablePrice}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-sm font-mono text-slate-500">$</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={5}
+                    aria-label="Preço inicial (1ª limpeza)"
+                    value={quickPrimaryPrice}
+                    onChange={(e) => {
+                      const val = Math.max(0, Math.round(Number(e.target.value) || 0));
+                      setQCustomPrimaryPrice(val);
+                    }}
+                    className="w-24 h-9 px-2.5 rounded-md border border-slate-300 bg-white font-mono tabular-nums text-sm font-semibold text-right text-[#0B6273]"
+                  />
+                </div>
+              </div>
+
+              {quickCalc.isRecurring && quickRecurringPrice !== null && (
+                <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="block text-xs font-semibold text-slate-700">
+                      Preço recorrente (por visita · {FREQUENCY_LABELS[qFrequency]})
+                    </span>
+                    <span className="block text-[11px] text-slate-500">
+                      Tabela: ${quickCalc.recurringTablePrice}/visita
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="text-sm font-mono text-slate-500">$</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={5}
+                      aria-label="Preço recorrente (por visita)"
+                      value={quickRecurringPrice}
+                      onChange={(e) => {
+                        const val = Math.max(0, Math.round(Number(e.target.value) || 0));
+                        setQCustomRecurringPrice(val);
+                      }}
+                      className="w-24 h-9 px-2.5 rounded-md border border-slate-300 bg-white font-mono tabular-nums text-sm font-semibold text-right text-slate-900"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -451,57 +580,88 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
         )}
 
         {/* Sub-abas */}
-        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
+        <div className="grid grid-cols-2 sm:inline-flex sm:flex-wrap gap-1 p-1 rounded-xl bg-slate-100/90 border border-slate-200/70">
           <button
             type="button"
             onClick={() => setSubTab('hoje')}
-            className={`inline-flex items-center justify-center gap-2 h-10 px-3.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+            className={`inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
               subTab === 'hoje'
-                ? 'bg-[#0B6273] text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <CalendarCheck className="w-4 h-4 shrink-0" />
-            <span>Hoje ({dueTodayLeads.length})</span>
+            <CalendarCheck
+              className={`w-4 h-4 shrink-0 ${
+                subTab === 'hoje' ? 'text-[#0B6273]' : 'text-slate-400'
+              }`}
+            />
+            <span>
+              Hoje{' '}
+              <span className="font-mono tabular-nums text-xs text-slate-500">
+                ({dueTodayLeads.length})
+              </span>
+            </span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('todos')}
-            className={`inline-flex items-center justify-center gap-2 h-10 px-3.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+            className={`inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
               subTab === 'todos'
-                ? 'bg-[#0B6273] text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Users className="w-4 h-4 shrink-0" />
-            <span>Todos os leads ({leads.length})</span>
+            <Users
+              className={`w-4 h-4 shrink-0 ${
+                subTab === 'todos' ? 'text-[#0B6273]' : 'text-slate-400'
+              }`}
+            />
+            <span>
+              Todos os leads{' '}
+              <span className="font-mono tabular-nums text-xs text-slate-500">
+                ({leads.length})
+              </span>
+            </span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('painel')}
-            className={`inline-flex items-center justify-center gap-2 h-10 px-3.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+            className={`inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
               subTab === 'painel'
-                ? 'bg-[#0B6273] text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <BarChart3 className="w-4 h-4 shrink-0" />
+            <BarChart3
+              className={`w-4 h-4 shrink-0 ${
+                subTab === 'painel' ? 'text-[#0B6273]' : 'text-slate-400'
+              }`}
+            />
             <span>Painel de Negociação</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('ajudantes')}
-            className={`inline-flex items-center justify-center gap-2 h-10 px-3.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+            className={`inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
               subTab === 'ajudantes'
-                ? 'bg-[#0B6273] text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <UserPlus className="w-4 h-4 shrink-0" />
-            <span>Possíveis ajudantes ({helpers.length})</span>
+            <UserPlus
+              className={`w-4 h-4 shrink-0 ${
+                subTab === 'ajudantes' ? 'text-[#0B6273]' : 'text-slate-400'
+              }`}
+            />
+            <span>
+              Possíveis ajudantes{' '}
+              <span className="font-mono tabular-nums text-xs text-slate-500">
+                ({helpers.length})
+              </span>
+            </span>
           </button>
         </div>
       </section>
@@ -511,7 +671,7 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
         <section className="space-y-4">
           {dueTodayLeads.length === 0 ? (
             leads.length === 0 ? (
-              <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-3">
+              <div className="bg-white border border-slate-200/90 shadow-[0_1px_2px_rgba(15,23,42,0.04)] rounded-2xl p-8 text-center space-y-3">
                 <p className="text-sm text-slate-600">
                   Nenhum lead salvo ainda. Calcule um orçamento ou use &quot;Novo
                   lead rápido&quot; para iniciar uma conversa.
@@ -519,14 +679,14 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
                 <button
                   type="button"
                   onClick={onGoToCalculator}
-                  className="inline-flex items-center h-10 px-4 rounded-lg bg-[#0B6273] text-white text-sm font-medium hover:bg-[#084E5C]"
+                  className="inline-flex items-center h-10 px-4 rounded-xl bg-[#0B6273] text-white text-sm font-medium hover:bg-[#084E5C]"
                 >
                   Ir para Calculadora
                 </button>
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="bg-white border border-slate-200/90 shadow-[0_1px_2px_rgba(15,23,42,0.04)] rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs sm:text-sm text-slate-600">
                     Nenhum follow-up vencendo hoje. Escolha um lead recente abaixo
                     para abrir o espaço de conversa:

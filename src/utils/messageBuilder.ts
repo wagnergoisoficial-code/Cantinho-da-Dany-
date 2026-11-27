@@ -8,6 +8,7 @@ import {
 import { DEFAULT_CITY_FIXED_DAYS } from '../data/defaultPricing';
 import { formatOfficialCityName } from './cityFormatter';
 import { resolveDateOptionsForCity } from './dateOptions';
+import { CalendarAvailabilityResult } from './googleCalendarApi';
 import { computeDeepCleanRangeMax } from './pricingEngine';
 
 const FREQUENCY_PT: Record<FrequencyType, string> = {
@@ -161,7 +162,8 @@ export function buildQuoteMessages(
   deepCleanRangeMarginPercent = 20,
   servedCities: string[] = [],
   referenceDate: Date = new Date(),
-  cityFixedDays: CityFixedDayRule[] = DEFAULT_CITY_FIXED_DAYS
+  cityFixedDays: CityFixedDayRule[] = DEFAULT_CITY_FIXED_DAYS,
+  calendarAvailability?: CalendarAvailabilityResult | null
 ): { english: string; portuguese: string } {
   const firstName = input.clientName.trim().split(/\s+/)[0] || '';
   const nameDisplay = firstName || '[Nome]';
@@ -201,9 +203,34 @@ export function buildQuoteMessages(
   );
   const [date1, date2] = resolvedCityDates.dates;
 
-  const closingFullEn = `I have an opening on ${date1.en} or ${date2.en}. Which works better for you?`;
-  const closingCompactEn = `I have an opening ${date1.en} or ${date2.en}. Which works better for you?`;
-  const closingPt = `Tenho horário disponível em ${date1.pt} ou ${date2.pt}. Qual funciona melhor para você?`;
+  const isCalendarVerified =
+    Boolean(calendarAvailability?.verifiedAvailable) &&
+    (calendarAvailability?.verifiedSlots.length ?? 0) > 0;
+  const verifiedSlots = isCalendarVerified
+    ? calendarAvailability!.verifiedSlots
+    : [];
+
+  let closingFullEn = '';
+  let closingMediumEn = '';
+  let closingCompactEn = '';
+  let closingPt = '';
+
+  if (isCalendarVerified && verifiedSlots.length >= 2) {
+    closingFullEn = `I have an opening on ${verifiedSlots[0].en} or ${verifiedSlots[1].en}. Which works better for you?`;
+    closingMediumEn = `I have an opening ${verifiedSlots[0].en} or ${verifiedSlots[1].en}. Which works better for you?`;
+    closingCompactEn = `I have an opening ${verifiedSlots[0].en} or ${verifiedSlots[1].en}. Which works better for you?`;
+    closingPt = `Tenho horário disponível em ${verifiedSlots[0].pt} ou ${verifiedSlots[1].pt}. Qual funciona melhor para você?`;
+  } else if (isCalendarVerified && verifiedSlots.length === 1) {
+    closingFullEn = `I have an opening on ${verifiedSlots[0].en}. Does that work for you?`;
+    closingMediumEn = `I have an opening ${verifiedSlots[0].en}. Does that work for you?`;
+    closingCompactEn = `I have an opening ${verifiedSlots[0].en}. Does that work?`;
+    closingPt = `Tenho horário disponível em ${verifiedSlots[0].pt}. Esse horário funciona para você?`;
+  } else {
+    closingFullEn = `Would you prefer ${date1.en} or ${date2.en}, and what time works best so I can confirm availability?`;
+    closingMediumEn = `Do you prefer ${date1.en} or ${date2.en}, and what time works best to confirm availability?`;
+    closingCompactEn = `What day and time do you prefer so I can confirm availability?`;
+    closingPt = `Qual dia e horário você prefere (como ${date1.pt} ou ${date2.pt}) para eu confirmar a disponibilidade?`;
+  }
 
   const hasPromo = calc.promoPercent > 0;
   const promoTagEn = hasPromo ? ` (${calc.promoPercent}% off)` : '';
@@ -233,8 +260,9 @@ export function buildQuoteMessages(
 
     const english = pickWithinWordLimit([
       `${firstSentenceEn}\n\n${homeScopeEn}, ${serviceEn} is $${finalPrimaryPrice}${promoTagEn}.${proofEn} ${closingFullEn}`,
-      `${firstSentenceEn}\n\n${homeScopeEn}, ${serviceEn} is $${finalPrimaryPrice}${promoTagEn}.${proofEn} ${closingCompactEn}`,
+      `${firstSentenceEn}\n\n${homeScopeEn}, ${serviceEn} is $${finalPrimaryPrice}${promoTagEn}.${proofEn} ${closingMediumEn}`,
       `${firstSentenceEn}\n\n${homeScopeEn}, ${serviceEn} is $${finalPrimaryPrice}.${proofEn} ${closingCompactEn}`,
+      `Hi ${nameDisplay}, Dani from Dany Clean Pro here. ${homeScopeEn}, ${serviceEn} is $${finalPrimaryPrice}. ${closingCompactEn}`,
     ]);
 
     const portuguese = `${firstSentencePt}\n\n${homeScopePt}, o serviço de ${servicePt} fica $${finalPrimaryPrice}${promoTagPt}.${proofPt} ${closingPt}`;
@@ -244,7 +272,12 @@ export function buildQuoteMessages(
 
   if (input.serviceType === 'recorrente') {
     const freqPt = FREQUENCY_PT[input.frequency];
-    const recurringAmount = finalRecurringPrice ?? finalPrimaryPrice;
+    const hasReliableRecurring =
+      typeof finalRecurringPrice === 'number' &&
+      Number.isFinite(finalRecurringPrice) &&
+      finalRecurringPrice > 0;
+    const recurringAmount = hasReliableRecurring ? finalRecurringPrice : null;
+
     const extrasFull = formatExtrasEn(input, 'standard', false);
     const extrasCompact = formatExtrasEn(input, 'standard', true);
     const extrasPt = formatExtrasPt(input, 'standard');
@@ -261,37 +294,61 @@ export function buildQuoteMessages(
       const biweeklyShortEn = `or $${biweeklyOption} every other week`;
       const biweeklyClausePt = `ou $${biweeklyOption} por visita se preferir a cada duas semanas`;
 
+      if (recurringAmount !== null) {
+        const english = pickWithinWordLimit([
+          `${firstSentenceEn}\n\n${homeScopeEn}, your first cleaning${extrasFullClause} is $${finalPrimaryPrice}${promoTagEn} and monthly visits are $${recurringAmount}, ${biweeklyLongEn}.${proofEn} ${closingFullEn}`,
+          `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning${extrasCompactClause} is $${finalPrimaryPrice}${promoTagEn} and monthly is $${recurringAmount}, ${biweeklyLongEn}.${proofEn} ${closingMediumEn}`,
+          `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning $${finalPrimaryPrice}${promoTagEn}, monthly $${recurringAmount}, ${biweeklyShortEn}.${proofEn} ${closingMediumEn}`,
+          `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning is $${finalPrimaryPrice}${promoTagEn}, monthly $${recurringAmount}, ${biweeklyShortEn}.${proofEn} ${closingCompactEn}`,
+          `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning $${finalPrimaryPrice}, monthly $${recurringAmount}, ${biweeklyShortEn}.${proofEn} ${closingCompactEn}`,
+          `Hi ${nameDisplay}, Dani from Dany Clean Pro here. ${bedrooms}-bedroom home in ${cityDisplay}: first cleaning $${finalPrimaryPrice}, monthly $${recurringAmount}, ${biweeklyShortEn}. ${closingCompactEn}`,
+        ]);
+
+        const portuguese = `${firstSentencePt}\n\n${homeScopePt}, sua primeira limpeza${extrasLinePt} fica $${finalPrimaryPrice}${promoTagPt} e as visitas mensais ficam $${recurringAmount}, ${biweeklyClausePt}.${proofPt} ${closingPt}`;
+
+        return { english, portuguese };
+      }
+
       const english = pickWithinWordLimit([
-        `${firstSentenceEn}\n\n${homeScopeEn}, your first cleaning${extrasFullClause} is $${finalPrimaryPrice}${promoTagEn} and monthly visits are $${recurringAmount}, ${biweeklyLongEn}.${proofEn} ${closingFullEn}`,
-        `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning${extrasCompactClause} is $${finalPrimaryPrice}${promoTagEn} and monthly is $${recurringAmount}, ${biweeklyLongEn}.${proofEn} ${closingCompactEn}`,
-        `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning $${finalPrimaryPrice}${promoTagEn}, monthly $${recurringAmount}, ${biweeklyLongEn}.${proofEn} ${closingCompactEn}`,
-        `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning is $${finalPrimaryPrice}${promoTagEn} and monthly is $${recurringAmount}, ${biweeklyShortEn}.${proofEn} ${closingFullEn}`,
-        `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning $${finalPrimaryPrice}, monthly $${recurringAmount}, ${biweeklyShortEn}.${proofEn} ${closingCompactEn}`,
+        `${firstSentenceEn}\n\n${homeScopeEn}, your first cleaning${extrasFullClause} is $${finalPrimaryPrice}${promoTagEn}, and I will confirm your monthly rate.${proofEn} ${closingFullEn}`,
+        `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning${extrasCompactClause} is $${finalPrimaryPrice}${promoTagEn}, and I will confirm your monthly rate.${proofEn} ${closingCompactEn}`,
+        `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning $${finalPrimaryPrice}, and I will confirm the monthly rate.${proofEn} ${closingCompactEn}`,
+      ]);
+      const portuguese = `${firstSentencePt}\n\n${homeScopePt}, sua primeira limpeza${extrasLinePt} fica $${finalPrimaryPrice}${promoTagPt}, e confirmo com você o valor das visitas mensais.${proofPt} ${closingPt}`;
+      return { english, portuguese };
+    }
+
+    if (recurringAmount !== null) {
+      const recurringPhraseFullEn =
+        input.frequency === 'quinzenal'
+          ? `visits every other week are $${recurringAmount} per visit`
+          : `ongoing weekly visits are $${recurringAmount} per visit`;
+      const recurringPhraseShortEn =
+        input.frequency === 'quinzenal'
+          ? `every other week is $${recurringAmount}`
+          : `weekly is $${recurringAmount}`;
+
+      const english = pickWithinWordLimit([
+        `${firstSentenceEn}\n\n${homeScopeEn}, your first cleaning${extrasFullClause} is $${finalPrimaryPrice}${promoTagEn} and ${recurringPhraseFullEn}.${proofEn} ${closingFullEn}`,
+        `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning${extrasCompactClause} is $${finalPrimaryPrice}${promoTagEn} and ${recurringPhraseShortEn}.${proofEn} ${closingMediumEn}`,
+        `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning is $${finalPrimaryPrice}${promoTagEn} and ${recurringPhraseShortEn}.${proofEn} ${closingCompactEn}`,
+        `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning $${finalPrimaryPrice}, ${recurringPhraseShortEn}.${proofEn} ${closingCompactEn}`,
+        `Hi ${nameDisplay}, Dani from Dany Clean Pro here. ${bedrooms}-bedroom home in ${cityDisplay}: first cleaning $${finalPrimaryPrice}, ${recurringPhraseShortEn}. ${closingCompactEn}`,
       ]);
 
-      const portuguese = `${firstSentencePt}\n\n${homeScopePt}, sua primeira limpeza${extrasLinePt} fica $${finalPrimaryPrice}${promoTagPt} e as visitas mensais ficam $${recurringAmount}, ${biweeklyClausePt}.${proofPt} ${closingPt}`;
+      const portuguese = `${firstSentencePt}\n\n${homeScopePt}, sua primeira limpeza${extrasLinePt} fica $${finalPrimaryPrice}${promoTagPt} e a manutenção ${freqPt} fica $${recurringAmount} por visita.${proofPt} ${closingPt}`;
 
       return { english, portuguese };
     }
 
-    const recurringPhraseFullEn =
-      input.frequency === 'quinzenal'
-        ? `visits every other week are $${recurringAmount} per visit`
-        : `ongoing weekly visits are $${recurringAmount} per visit`;
-    const recurringPhraseShortEn =
-      input.frequency === 'quinzenal'
-        ? `visits every other week are $${recurringAmount}`
-        : `weekly visits are $${recurringAmount}`;
-
+    const freqLabelEn =
+      input.frequency === 'quinzenal' ? 'every other week' : 'weekly';
     const english = pickWithinWordLimit([
-      `${firstSentenceEn}\n\n${homeScopeEn}, your first cleaning${extrasFullClause} is $${finalPrimaryPrice}${promoTagEn} and ${recurringPhraseFullEn}.${proofEn} ${closingFullEn}`,
-      `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning${extrasCompactClause} is $${finalPrimaryPrice}${promoTagEn} and ${recurringPhraseShortEn}.${proofEn} ${closingFullEn}`,
-      `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning is $${finalPrimaryPrice}${promoTagEn} and ${recurringPhraseShortEn}.${proofEn} ${closingCompactEn}`,
-      `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning $${finalPrimaryPrice}, ${recurringPhraseShortEn}.${proofEn} ${closingCompactEn}`,
+      `${firstSentenceEn}\n\n${homeScopeEn}, your first cleaning${extrasFullClause} is $${finalPrimaryPrice}${promoTagEn}, and I will confirm your ${freqLabelEn} rate.${proofEn} ${closingFullEn}`,
+      `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning${extrasCompactClause} is $${finalPrimaryPrice}${promoTagEn}, and I will confirm the ${freqLabelEn} rate.${proofEn} ${closingCompactEn}`,
+      `${firstSentenceEn}\n\n${homeScopeEn}, first cleaning $${finalPrimaryPrice}, and I will confirm the recurring rate.${proofEn} ${closingCompactEn}`,
     ]);
-
-    const portuguese = `${firstSentencePt}\n\n${homeScopePt}, sua primeira limpeza${extrasLinePt} fica $${finalPrimaryPrice}${promoTagPt} e a manutenção ${freqPt} fica $${recurringAmount} por visita.${proofPt} ${closingPt}`;
-
+    const portuguese = `${firstSentencePt}\n\n${homeScopePt}, sua primeira limpeza${extrasLinePt} fica $${finalPrimaryPrice}${promoTagPt}, e confirmo com você o valor por visita ${freqPt}.${proofPt} ${closingPt}`;
     return { english, portuguese };
   }
 
@@ -308,7 +365,7 @@ export function buildQuoteMessages(
     const english = pickWithinWordLimit([
       `${deepIntroEn}\n\n${deepScopeEn} For an exact price, could you text me 3 photos or a short video of the kitchen, main bathroom and living room? No need to tidy up first. If you'd rather, I can stop by.`,
       `${deepIntroEn}\n\n${deepScopeEn} For an exact price, could you text me 3 photos or a video of the kitchen, main bathroom and living room? No need to tidy up first. If you'd rather, I can stop by.`,
-      `${deepIntroEn}\n\n${deepScopeEn} For an exact price, could you text me 3 photos or a video of the kitchen, main bathroom and living room? No need to tidy first. Or I can stop by.`,
+      `${deepIntroEn}\n\n${deepScopeEn} For an exact price, could you text me 3 photos or a video of the kitchen, main bathroom and living room? No need to tidy up first. Or I can stop by.`,
       `${deepIntroEn}\n\n${deepScopeEn} For an exact price, send 3 photos or a video of the kitchen, main bath and living room? No need to tidy first. Or I can stop by.`,
     ]);
 
@@ -325,8 +382,9 @@ export function buildQuoteMessages(
 
     const english = pickWithinWordLimit([
       `${firstSentenceEn}\n\n${homeScopeEn}, move-in and move-out cleaning is $${finalPrimaryPrice}${promoTagEn} (includes oven, fridge, cabinets, windows${addonsEn}).${proofEn} ${closingFullEn}`,
-      `${firstSentenceEn}\n\n${homeScopeEn}, move-in and move-out is $${finalPrimaryPrice}${promoTagEn} (oven, fridge, cabinets, windows included).${proofEn} ${closingCompactEn}`,
+      `${firstSentenceEn}\n\n${homeScopeEn}, move-in and move-out is $${finalPrimaryPrice}${promoTagEn} (oven, fridge, cabinets, windows included).${proofEn} ${closingMediumEn}`,
       `${firstSentenceEn}\n\n${homeScopeEn}, move-in and move-out is $${finalPrimaryPrice} (oven, fridge, cabinets, windows).${proofEn} ${closingCompactEn}`,
+      `Hi ${nameDisplay}, Dani from Dany Clean Pro here. ${bedrooms}-bedroom move-in/out in ${cityDisplay} is $${finalPrimaryPrice} (oven, fridge, cabinets, windows). ${closingCompactEn}`,
     ]);
 
     const portuguese = `${firstSentencePt}\n\n${homeScopePt}, a limpeza move-in e move-out fica $${finalPrimaryPrice}${promoTagPt}, já incluindo forno, geladeira, armários e janelas por dentro.${addonsPt}${proofPt} ${closingPt}`;
@@ -344,8 +402,9 @@ export function buildQuoteMessages(
 
   const english = pickWithinWordLimit([
     `${firstSentenceEn}\n\n${homeScopeEn}, your cleaning total${extrasFullClause} is $${finalPrimaryPrice}${promoTagEn}.${proofEn} ${closingFullEn}`,
-    `${firstSentenceEn}\n\n${homeScopeEn}, your cleaning total${extrasCompactClause} is $${finalPrimaryPrice}${promoTagEn}.${proofEn} ${closingCompactEn}`,
+    `${firstSentenceEn}\n\n${homeScopeEn}, your cleaning total${extrasCompactClause} is $${finalPrimaryPrice}${promoTagEn}.${proofEn} ${closingMediumEn}`,
     `${firstSentenceEn}\n\n${homeScopeEn}, cleaning is $${finalPrimaryPrice}.${proofEn} ${closingCompactEn}`,
+    `Hi ${nameDisplay}, Dani from Dany Clean Pro here. ${bedrooms}-bedroom cleaning in ${cityDisplay} is $${finalPrimaryPrice}. ${closingCompactEn}`,
   ]);
 
   const portuguese = `${firstSentencePt}\n\n${homeScopePt}, sua limpeza${extrasPtClause} fica $${finalPrimaryPrice}${promoTagPt}.${proofPt} ${closingPt}`;

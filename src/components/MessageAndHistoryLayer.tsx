@@ -21,8 +21,9 @@ import {
 import {
   checkNameMismatch,
   validateNegotiationCompliance,
-  validateSimplePunctuation,
+  validatePortugueseCompliance,
 } from '../utils/negotiationEngine';
+import { CalendarAvailabilityResult } from '../utils/googleCalendarApi';
 import { VISITA_AVULSA_LABELS } from '../data/defaultPricing';
 
 interface MessageAndHistoryLayerProps {
@@ -33,6 +34,7 @@ interface MessageAndHistoryLayerProps {
   deepCleanRangeMarginPercent: number;
   servedCities: string[];
   cityFixedDays: CityFixedDayRule[];
+  calendarAvailability?: CalendarAvailabilityResult | null;
   onChangeDays: (day1: string, day2: string) => void;
   onSaveToHistory: () => void;
   onSaveAndOpenConversation?: () => void;
@@ -49,6 +51,7 @@ export const MessageAndHistoryLayer: React.FC<MessageAndHistoryLayerProps> = ({
   deepCleanRangeMarginPercent,
   servedCities,
   cityFixedDays,
+  calendarAvailability,
   onChangeDays,
   onSaveToHistory,
   onSaveAndOpenConversation,
@@ -57,6 +60,7 @@ export const MessageAndHistoryLayer: React.FC<MessageAndHistoryLayerProps> = ({
   saveError,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [previewLang, setPreviewLang] = useState<'en' | 'pt'>('en');
 
   const missingName = !input.clientName.trim();
   const missingOrigin = !input.origin;
@@ -70,14 +74,20 @@ export const MessageAndHistoryLayer: React.FC<MessageAndHistoryLayerProps> = ({
     deepCleanRangeMarginPercent,
     servedCities,
     new Date(),
-    cityFixedDays
+    cityFixedDays,
+    calendarAvailability
   );
 
+  const calendarVerified = Boolean(calendarAvailability?.verifiedAvailable);
   const wordCount = countWords(english);
-  const compliance = validateNegotiationCompliance(english);
-  const ptPunctuationIssues = validateSimplePunctuation(portuguese);
+  const compliance = validateNegotiationCompliance(english, {
+    calendarVerified,
+  });
+  const ptIssues = validatePortugueseCompliance(portuguese, {
+    calendarVerified,
+  });
   const allViolations = Array.from(
-    new Set([...compliance.violations, ...ptPunctuationIssues])
+    new Set([...compliance.violations, ...ptIssues])
   );
 
   const copyBlocked =
@@ -126,172 +136,135 @@ export const MessageAndHistoryLayer: React.FC<MessageAndHistoryLayerProps> = ({
   };
 
   return (
-    <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4 sm:space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+    <section className="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
         <div>
-          <span className="text-xs font-medium text-[#0B6273]">Camada 4</span>
-          <h2 className="text-lg font-semibold text-slate-900">
-            Mensagem pronta e registro no histórico
+          <h2 className="text-base font-semibold text-slate-900">
+            04. Proposta pronta
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Usa sempre o Preço final informado na Camada 2 e datas reais sem feriados.
+            Usa o preço final e datas reais sem feriados.
           </p>
         </div>
 
-        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 w-full sm:w-auto">
-          <button
-            type="button"
-            onClick={handleCopy}
-            disabled={copyBlocked}
-            title={
-              copyBlocked
-                ? [...missingFieldAlerts, ...allViolations].join(' · ')
-                : 'Copiar mensagem em inglês'
-            }
-            className="inline-flex items-center justify-center gap-2 h-11 sm:h-10 px-3 sm:px-4 rounded-lg bg-[#0B6273] text-white text-sm font-medium hover:bg-[#084E5C] disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors whitespace-nowrap shrink-0"
-          >
-            {copied ? (
-              <>
-                <Check className="w-4 h-4" />
-                <span>Copiado</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-4 h-4" />
-                <span>Copiar mensagem</span>
-              </>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onSaveToHistory}
-            className="inline-flex items-center justify-center gap-2 h-11 sm:h-10 px-3 sm:px-4 rounded-lg border border-[#0B6273] text-[#0B6273] bg-white text-sm font-medium hover:bg-[#EAF4F6] transition-colors whitespace-nowrap shrink-0"
-          >
-            <BookmarkCheck className="w-4 h-4" />
-            <span className="truncate">
-              {justSaved ? 'Salvo como Enviado' : 'Salvar no histórico'}
-            </span>
-          </button>
-
-          {onSaveAndOpenConversation && (
-            <button
-              type="button"
-              onClick={onSaveAndOpenConversation}
-              className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-2 h-11 sm:h-10 px-3 sm:px-4 rounded-lg border border-slate-300 text-slate-800 bg-slate-50 text-sm font-medium hover:bg-slate-100 transition-colors whitespace-nowrap shrink-0"
-            >
-              <MessageSquare className="w-4 h-4 text-[#0B6273]" />
-              <span>Salvar e abrir conversa</span>
-            </button>
-          )}
-        </div>
+        <span
+          className={`text-xs font-mono tabular-nums ${
+            wordCount > 60 ? 'text-red-600 font-semibold' : 'text-slate-500'
+          }`}
+        >
+          {wordCount}/60 palavras
+        </span>
       </div>
 
-      {saveError && (
-        <div className="p-3 rounded-lg bg-red-50 border border-red-300 flex items-center gap-2 text-xs font-semibold text-red-700">
+      {/* Resumo compacto de checagem */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600">
+        <span className="font-medium text-slate-900">
+          {input.clientName.trim() || 'Sem nome'}
+        </span>
+        <span className="text-slate-300" aria-hidden="true">
+          ·
+        </span>
+        <span>{input.city.trim() || 'Sem cidade'}</span>
+        <span className="text-slate-300" aria-hidden="true">
+          ·
+        </span>
+        <span>{houseSizeSummary}</span>
+        <span className="text-slate-300" aria-hidden="true">
+          ·
+        </span>
+        <span>
+          {input.origin
+            ? input.origin === 'Facebook' && input.adCode.trim()
+              ? `Facebook (${input.adCode.trim()})`
+              : input.origin
+            : 'Sem origem'}
+        </span>
+      </div>
+
+      {missingFieldAlerts.length > 0 && (
+        <div className="p-3 rounded-xl bg-red-50 border border-red-200 flex items-start gap-2 text-xs font-medium text-red-700">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            {missingFieldAlerts.join(' · ')} antes de copiar a mensagem.
+          </span>
+        </div>
+      )}
+
+      {allViolations.length > 0 && (
+        <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs font-medium text-red-700 space-y-1">
+          {allViolations.map((v) => (
+            <div key={v} className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {nameCheck.hasMismatch && (
+        <div className="p-3 rounded-xl bg-red-50 border border-red-200 flex items-center gap-2 text-xs font-medium text-red-700">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>{saveError}</span>
+          <span>Confira o nome antes de enviar.</span>
         </div>
       )}
 
-      {justSaved && onOpenLastSavedConversation && (
-        <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900">
-          <span>
-            Lead salvo com a mensagem inicial. Quando a cliente responder,
-            continue a conversa por lá.
-          </span>
-          <button
-            type="button"
-            onClick={onOpenLastSavedConversation}
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-[#0B6273] text-white font-medium hover:bg-[#084E5C] whitespace-nowrap shrink-0"
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            <span>Abrir espaço de conversa</span>
-          </button>
-        </div>
-      )}
-
-      {/* Checagem antes de copiar */}
-      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-700">
-          <span>
-            <strong>Nome:</strong> {input.clientName.trim() || 'Não informado'}
-          </span>
-          <span>
-            <strong>Cidade:</strong> {input.city.trim() || 'Não informada'}
-          </span>
-          <span>
-            <strong>Tamanho:</strong> {houseSizeSummary}
-          </span>
-          <span>
-            <strong>Origem:</strong>{' '}
-            {input.origin
-              ? input.origin === 'Facebook' && input.adCode.trim()
-                ? `Facebook (${input.adCode.trim()})`
-                : input.origin
-              : 'Não informada'}
-          </span>
-        </div>
-        {missingFieldAlerts.length > 0 && (
-          <div className="p-2.5 rounded bg-red-50 border border-red-300 flex items-start gap-2 text-xs font-semibold text-red-700">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>
-              {missingFieldAlerts.join(' · ')} antes de copiar a mensagem.
-            </span>
-          </div>
-        )}
-        {allViolations.length > 0 && (
-          <div className="p-2.5 rounded bg-red-50 border border-red-300 text-xs font-semibold text-red-700 space-y-1">
-            {allViolations.map((v) => (
-              <div key={v} className="flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{v}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        {nameCheck.hasMismatch && (
-          <div className="p-2 rounded bg-red-50 border border-red-300 flex items-center gap-2 text-xs font-semibold text-red-700">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span>Confira o nome antes de enviar.</span>
-          </div>
-        )}
-      </div>
-
-      {/* Opções de data: Deep clean pede fotos sem datas; cidades com dia fixo usam o dia configurado */}
+      {/* Opções de data */}
       {input.serviceType === 'deep_clean' ? (
-        <div className="p-3 rounded-lg bg-[#EAF4F6]/70 border border-[#0B6273]/20 text-xs text-slate-700">
-          <strong>Deep cleaning:</strong> a primeira mensagem envia a faixa de
-          preço e pede 3 fotos ou vídeo curto sem oferecer datas. Ao salvar, o
-          lead vai automaticamente para <strong>Aguardando fotos</strong>.
+        <div className="p-3 rounded-xl bg-[#EAF4F6]/70 border border-[#0B6273]/20 text-xs text-slate-700">
+          <strong>Deep cleaning:</strong> envia a faixa de preço e pede 3 fotos
+          ou vídeo curto sem oferecer datas. Ao salvar, entra em{' '}
+          <strong>Aguardando fotos</strong>.
         </div>
       ) : resolvedCityDates.isFixedCityDay ? (
-        <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700">
-          <strong>
-            Dia fixo para {formatOfficialCityName(input.city)}:{' '}
-            {resolvedCityDates.fixedWeekdayPt}.
-          </strong>{' '}
-          Datas oferecidas na mensagem:{' '}
-          <span className="font-medium text-slate-900">{resolvedDate1.en}</span>{' '}
-          ou{' '}
-          <span className="font-medium text-slate-900">{resolvedDate2.en}</span>
-          .
+        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1">
+          <div>
+            <strong>
+              Dia fixo ({formatOfficialCityName(input.city)}):{' '}
+              {resolvedCityDates.fixedWeekdayPt}.
+            </strong>{' '}
+            {calendarVerified && calendarAvailability?.verifiedSlots.length
+              ? 'Livres no Google Calendar:'
+              : 'Datas de referência (a confirmar):'}{' '}
+            {calendarVerified && calendarAvailability?.verifiedSlots.length ? (
+              <span className="font-medium text-slate-900">
+                {calendarAvailability.verifiedSlots.map((s) => s.pt).join(' · ')}
+              </span>
+            ) : (
+              <>
+                <span className="font-medium text-slate-900">
+                  {resolvedDate1.en}
+                </span>{' '}
+                ou{' '}
+                <span className="font-medium text-slate-900">
+                  {resolvedDate2.en}
+                </span>
+                .
+              </>
+            )}
+          </div>
+          {!calendarVerified && (
+            <div className="text-[11px] text-slate-500">
+              Agenda desconectada ou sem horário livre confirmado: o rascunho
+              pergunta a preferência e avisa que a disponibilidade será
+              confirmada.
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label
                 htmlFor="dayOption1"
                 className="block text-xs font-medium text-slate-600 mb-1"
               >
-                Dia da semana 1
+                Dia opção 1
               </label>
               <select
                 id="dayOption1"
                 value={day1Value}
                 onChange={(e) => onChangeDays(e.target.value, day2Value)}
-                className="w-full h-11 sm:h-10 px-3 rounded-lg border border-slate-300 text-base text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#0B6273]/25 focus:border-[#0B6273]"
+                className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-slate-50/70 text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0B6273]/20 focus:border-[#0B6273]"
               >
                 {WEEKDAY_CHOICES.map((choice) => (
                   <option key={choice.value} value={choice.value}>
@@ -305,13 +278,13 @@ export const MessageAndHistoryLayer: React.FC<MessageAndHistoryLayerProps> = ({
                 htmlFor="dayOption2"
                 className="block text-xs font-medium text-slate-600 mb-1"
               >
-                Dia da semana 2
+                Dia opção 2
               </label>
               <select
                 id="dayOption2"
                 value={day2Value}
                 onChange={(e) => onChangeDays(day1Value, e.target.value)}
-                className="w-full h-11 sm:h-10 px-3 rounded-lg border border-slate-300 text-base text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#0B6273]/25 focus:border-[#0B6273]"
+                className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-slate-50/70 text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0B6273]/20 focus:border-[#0B6273]"
               >
                 {WEEKDAY_CHOICES.map((choice) => (
                   <option key={choice.value} value={choice.value}>
@@ -321,54 +294,133 @@ export const MessageAndHistoryLayer: React.FC<MessageAndHistoryLayerProps> = ({
               </select>
             </div>
           </div>
-          <p className="text-xs text-slate-500">
-            Datas oferecidas na mensagem:{' '}
-            <span className="font-medium text-slate-700">
-              {resolvedDate1.en}
-            </span>{' '}
-            ou{' '}
-            <span className="font-medium text-slate-700">
-              {resolvedDate2.en}
-            </span>
-            .
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            {calendarVerified && calendarAvailability?.verifiedSlots.length ? (
+              <>
+                Livres no Google Calendar:{' '}
+                <span className="font-medium text-slate-700">
+                  {calendarAvailability.verifiedSlots
+                    .map((s) => s.en)
+                    .join(' ou ')}
+                </span>
+                .
+              </>
+            ) : (
+              <>
+                Referência: {resolvedDate1.en} ou {resolvedDate2.en}. Sem
+                horário confirmado na agenda, o texto pergunta a preferência e
+                informa que vai confirmar disponibilidade.
+              </>
+            )}
           </p>
         </div>
       )}
 
-      {/* Mensagem em Inglês + Tradução em Português */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
-        <div className="border border-slate-200 rounded-lg p-3.5 sm:p-4 bg-slate-50/50 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-xs font-semibold text-[#0B6273]">
-              Mensagem pronta (Inglês Americano)
-            </h3>
-            <span
-              className={`text-xs font-mono tabular-nums shrink-0 ${
-                wordCount > 60 ? 'text-red-600 font-semibold' : 'text-slate-500'
-              }`}
-            >
-              {wordCount}/60 palavras
-            </span>
-          </div>
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm text-slate-900 leading-relaxed">
-            {english}
-          </pre>
+      {/* Controle segmentado EN / PT */}
+      <div className="space-y-2.5">
+        <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setPreviewLang('en')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
+              previewLang === 'en'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Inglês (enviar)
+          </button>
+          <button
+            type="button"
+            onClick={() => setPreviewLang('pt')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
+              previewLang === 'pt'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Tradução PT
+          </button>
         </div>
 
-        <div className="border border-slate-200 rounded-lg p-3.5 sm:p-4 bg-white space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-xs font-semibold text-slate-700">
-              Tradução em Português
-            </h3>
-            <span className="text-xs text-slate-500 shrink-0">
-              Conferência rápida
-            </span>
-          </div>
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm text-slate-700 leading-relaxed">
-            {portuguese}
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm text-slate-900 leading-relaxed">
+            {previewLang === 'en' ? english : portuguese}
           </pre>
         </div>
       </div>
+
+      {/* Ações principais */}
+      <div className="space-y-2.5 pt-1">
+        <button
+          type="button"
+          onClick={handleCopy}
+          disabled={copyBlocked}
+          title={
+            copyBlocked
+              ? [...missingFieldAlerts, ...allViolations].join(' · ')
+              : 'Copiar mensagem em inglês'
+          }
+          className="w-full inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl bg-[#0B6273] text-white text-sm font-semibold hover:bg-[#084E5C] disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+        >
+          {copied ? (
+            <>
+              <Check className="w-4 h-4" />
+              <span>Mensagem copiada</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-4 h-4" />
+              <span>Copiar mensagem em inglês</span>
+            </>
+          )}
+        </button>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <button
+            type="button"
+            onClick={onSaveToHistory}
+            className="inline-flex items-center justify-center gap-2 h-10 px-3 rounded-xl border border-slate-300 text-slate-800 bg-white text-xs sm:text-sm font-medium hover:bg-slate-50 transition-colors whitespace-nowrap"
+          >
+            <BookmarkCheck className="w-4 h-4 text-[#0B6273]" />
+            <span className="truncate">
+              {justSaved ? 'Salvo como Enviado' : 'Salvar no histórico'}
+            </span>
+          </button>
+
+          {onSaveAndOpenConversation && (
+            <button
+              type="button"
+              onClick={onSaveAndOpenConversation}
+              className="inline-flex items-center justify-center gap-2 h-10 px-3 rounded-xl border border-[#0B6273]/30 text-[#0B6273] bg-[#EAF4F6]/60 text-xs sm:text-sm font-medium hover:bg-[#EAF4F6] transition-colors whitespace-nowrap"
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>Salvar e abrir conversa</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {saveError && (
+        <div className="p-3 rounded-xl bg-red-50 border border-red-200 flex items-center gap-2 text-xs font-medium text-red-700">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>{saveError}</span>
+        </div>
+      )}
+
+      {justSaved && onOpenLastSavedConversation && (
+        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900">
+          <span>Lead salvo com a mensagem inicial.</span>
+          <button
+            type="button"
+            onClick={onOpenLastSavedConversation}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#0B6273] text-white font-medium hover:bg-[#084E5C] whitespace-nowrap shrink-0"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Abrir conversa</span>
+          </button>
+        </div>
+      )}
     </section>
   );
 };

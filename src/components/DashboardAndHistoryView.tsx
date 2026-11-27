@@ -1,19 +1,22 @@
 import React, { useMemo, useState } from 'react';
 import { Calendar, Search, Trash2, X } from 'lucide-react';
 import {
+  DEFAULT_PRICING_CONFIG,
   FREQUENCY_LABELS,
   LOSS_REASONS_SUGGESTIONS,
   SERVICE_TYPE_LABELS,
   VISITA_AVULSA_LABELS,
 } from '../data/defaultPricing';
-import { LeadQuoteRecord, QuoteStatus } from '../types/pricing';
+import { LeadQuoteRecord, PricingConfig, QuoteStatus } from '../types/pricing';
 import {
   computeTestMeasurements,
   formatResponseMinutes,
 } from '../utils/negotiationEngine';
+import { resolveLeadPricingSummary } from '../utils/pricingEngine';
 
 interface DashboardAndHistoryViewProps {
   records: LeadQuoteRecord[];
+  config?: PricingConfig;
   onUpdateStatus: (id: string, status: QuoteStatus, lossReason: string) => void;
   onDeleteRecord: (id: string) => void;
   onOpenNegotiation: (id: string) => void;
@@ -35,6 +38,7 @@ export const DashboardAndHistoryView: React.FC<
   DashboardAndHistoryViewProps
 > = ({
   records,
+  config = DEFAULT_PRICING_CONFIG,
   onUpdateStatus,
   onDeleteRecord,
   onOpenNegotiation,
@@ -116,90 +120,88 @@ export const DashboardAndHistoryView: React.FC<
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      {/* Painel com os 3 indicadores */}
-      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
-        <div className="border-b border-slate-100 pb-3">
-          <h2 className="text-lg font-semibold text-slate-900">
-            Painel comercial
+    <div className="space-y-5 sm:space-y-6">
+      {/* Faixa executiva de KPIs (elevação única com divisórias finas) */}
+      <section className="bg-white border border-slate-200/90 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden">
+        <div className="px-5 py-4 sm:px-6 border-b border-slate-100 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-base font-semibold text-slate-900">
+            Indicadores comerciais
           </h2>
-          <p className="text-xs text-slate-500">
-            Indicadores calculados a partir dos orçamentos salvos neste
-            navegador.
-          </p>
+          <span className="text-xs text-slate-500">
+            Consolidado dos orçamentos sincronizados
+          </span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="border border-slate-200 rounded-lg p-4">
-            <span className="block text-xs text-slate-500 mb-1">
+        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
+          <div className="p-5 sm:px-6">
+            <span className="block text-xs font-medium text-slate-500 mb-1.5">
               Leads da semana
             </span>
             <span className="text-3xl font-bold font-mono tabular-nums text-[#0B6273]">
               {metrics.leadsThisWeek}
             </span>
-            <span className="block text-xs text-slate-500 mt-1">
+            <span className="block text-xs text-slate-400 mt-1">
               Últimos 7 dias
             </span>
           </div>
 
-          <div className="border border-slate-200 rounded-lg p-4">
-            <span className="block text-xs text-slate-500 mb-1">
+          <div className="p-5 sm:px-6">
+            <span className="block text-xs font-medium text-slate-500 mb-1.5">
               Taxa de fechamento
             </span>
             <span className="text-3xl font-bold font-mono tabular-nums text-slate-900">
               {metrics.closingRate}%
             </span>
-            <span className="block text-xs text-slate-500 mt-1 font-mono tabular-nums">
+            <span className="block text-xs text-slate-400 mt-1 font-mono tabular-nums">
               {metrics.wonCount} de {metrics.total} orçamentos
             </span>
           </div>
 
-          <div className="border border-slate-200 rounded-lg p-4">
-            <span className="block text-xs text-slate-500 mb-1">
+          <div className="p-5 sm:px-6">
+            <span className="block text-xs font-medium text-slate-500 mb-1.5">
               Preço médio
             </span>
             <span className="text-3xl font-bold font-mono tabular-nums text-slate-900">
               ${metrics.averagePrice}
             </span>
-            <span className="block text-xs text-slate-500 mt-1">
-              Média do Preço final
+            <span className="block text-xs text-slate-400 mt-1">
+              Média do preço inicial final
             </span>
           </div>
         </div>
       </section>
 
       {/* Medição do teste: por semana e por origem */}
-      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
-        <div className="border-b border-slate-100 pb-3">
-          <h2 className="text-lg font-semibold text-slate-900">
-            Medição do teste (semana e origem)
+      <section className="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] space-y-5">
+        <div className="border-b border-slate-100 pb-3.5">
+          <h2 className="text-base font-semibold text-slate-900">
+            Medição por semana e origem
           </h2>
-          <p className="text-xs text-slate-500">
-            Quantos leads responderam, quantos fecharam e tempo médio até a
-            primeira resposta.
+          <p className="text-xs text-slate-500 mt-0.5">
+            Respostas, fechamentos e tempo médio até a primeira resposta.
           </p>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="border border-slate-200 rounded-lg p-3.5 bg-slate-50/50">
+        <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 border border-slate-200 rounded-xl bg-slate-50/40 overflow-hidden">
+          <div className="p-4">
             <span className="block text-xs text-slate-500">Total de leads</span>
             <span className="text-2xl font-bold font-mono tabular-nums text-slate-900">
               {testMetrics.totalLeads}
             </span>
           </div>
-          <div className="border border-slate-200 rounded-lg p-3.5 bg-slate-50/50">
+          <div className="p-4">
             <span className="block text-xs text-slate-500">Responderam</span>
             <span className="text-2xl font-bold font-mono tabular-nums text-[#0B6273]">
               {testMetrics.totalResponded}
             </span>
           </div>
-          <div className="border border-slate-200 rounded-lg p-3.5 bg-slate-50/50">
+          <div className="p-4">
             <span className="block text-xs text-slate-500">Fecharam</span>
             <span className="text-2xl font-bold font-mono tabular-nums text-emerald-700">
               {testMetrics.totalClosed}
             </span>
           </div>
-          <div className="border border-slate-200 rounded-lg p-3.5 bg-slate-50/50">
+          <div className="p-4">
             <span className="block text-xs text-slate-500">
               Tempo médio 1ª resposta
             </span>
@@ -326,15 +328,15 @@ export const DashboardAndHistoryView: React.FC<
         )}
       </section>
 
-      {/* Histórico em localStorage */}
-      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
+      {/* Histórico de orçamentos */}
+      <section className="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] space-y-5">
         <div className="space-y-4 border-b border-slate-100 pb-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">
+              <h2 className="text-base font-semibold text-slate-900">
                 Histórico de orçamentos
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 mt-0.5">
                 Filtre leads por status (Enviado, Fechou, Perdeu) e por período.
               </p>
             </div>
@@ -443,16 +445,16 @@ export const DashboardAndHistoryView: React.FC<
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-xl">
             {(['Todos', ...STATUS_OPTIONS] as const).map((status) => (
               <button
                 key={status}
                 type="button"
                 onClick={() => setFilterStatus(status)}
-                className={`min-h-[36px] px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
                   filterStatus === status
-                    ? 'bg-[#0B6273] text-white'
-                    : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 {status}
@@ -579,23 +581,38 @@ export const DashboardAndHistoryView: React.FC<
                     </div>
 
                     <div className="flex flex-wrap items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
-                      <div className="text-left sm:text-right">
-                        <div className="text-sm font-bold font-mono tabular-nums text-[#0B6273]">
-                          ${rec.finalPricePrimary}
-                          {rec.finalPriceRecurring !== null && (
-                            <span className="text-slate-700 font-medium">
-                              {' '}
-                              / rec. ${rec.finalPriceRecurring}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-slate-500 font-mono tabular-nums">
-                          Tabela: ${rec.tablePricePrimary}
-                          {rec.tablePriceRecurring !== null
-                            ? ` / $${rec.tablePriceRecurring}`
-                            : ''}
-                        </div>
-                      </div>
+                      {(() => {
+                        const pricing = resolveLeadPricingSummary(rec, config);
+                        return (
+                          <div className="text-left sm:text-right">
+                            <div className="text-sm font-bold font-mono tabular-nums text-[#0B6273]">
+                              {pricing.isRecurring ? (
+                                <>
+                                  <span>Inicial: ${pricing.initialPrice}</span>
+                                  <span className="text-slate-700 font-medium">
+                                    {' '}
+                                    · Recorrente:{' '}
+                                    {pricing.recurringStatus !== 'needs_confirmation' &&
+                                    pricing.recurringPrice !== null
+                                      ? `$${pricing.recurringPrice}/visita`
+                                      : 'a confirmar'}
+                                  </span>
+                                </>
+                              ) : (
+                                <span>${pricing.initialPrice}</span>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-500 font-mono tabular-nums">
+                              Tabela inicial: ${pricing.tableInitialPrice}
+                              {pricing.isRecurring
+                                ? pricing.tableRecurringPrice !== null
+                                  ? ` · Rec. tabela: $${pricing.tableRecurringPrice}/visita`
+                                  : ' · Rec. tabela: a confirmar'
+                                : ''}
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       <div className="flex flex-wrap items-center gap-2 ml-auto sm:ml-0">
                         <button

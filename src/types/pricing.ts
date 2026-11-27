@@ -131,6 +131,9 @@ export interface PotentialHelperRecord {
   notes: string;
   savedAt: string;
   sourceLeadId?: string;
+  recordVersion?: number;
+  updatedAt?: string;
+  updatedByEmail?: string;
 }
 
 export interface HouseTier {
@@ -207,6 +210,9 @@ export interface PricingConfig {
   extras: ExtrasPricing;
   visitaAvulsa: VisitaAvulsaPricing;
   negotiation: NegotiationConfig;
+  recordVersion?: number;
+  updatedAt?: string;
+  updatedByEmail?: string;
 }
 
 export interface UploadedPhoto {
@@ -365,6 +371,37 @@ export interface LeadQuoteRecord {
   mapsInsight?: MapsRouteInsight | null;
   dayOption1?: string;
   dayOption2?: string;
+  recordVersion?: number;
+  updatedAt?: string;
+  updatedByEmail?: string;
+}
+
+export interface CalendarAvailabilitySlot {
+  dateKey: string; // YYYY-MM-DD
+  weekdayEn: string;
+  dateEn: string; // e.g. "Tuesday, Dec 1"
+  datePt: string; // e.g. "terça, 01/12"
+  time24: string; // e.g. "09:00"
+  timeEn: string; // e.g. "9:00 AM"
+  timePt: string; // e.g. "09:00"
+  fullEn: string; // e.g. "Tuesday, Dec 1 at 9:00 AM"
+  fullPt: string; // e.g. "terça, 01/12 às 09:00"
+}
+
+export type CalendarAvailabilityUnverifiedReason =
+  | 'disconnected'
+  | 'loading'
+  | 'error'
+  | 'not_synced'
+  | 'no_free_slot'
+  | 'out_of_window';
+
+export interface CalendarAvailabilityState {
+  verified: boolean;
+  slots: CalendarAvailabilitySlot[];
+  reason?: CalendarAvailabilityUnverifiedReason;
+  statusMessagePt: string;
+  checkedAt?: string | null;
 }
 
 export interface AppBackupPayload {

@@ -318,6 +318,100 @@ export function parseLeadLocally(rawText: string): {
     notesParts.push(`${question}: ${answer}`);
   }
 
+  // Varredura complementar em texto livre para campos ainda vazios (útil também como alternativa se a IA estiver indisponível)
+  const textNorm = rawText.trim();
+  if (!payload.email) {
+    const emailMatch = textNorm.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+    if (emailMatch) {
+      payload.email = emailMatch[0];
+      markMatched('email');
+    }
+  }
+
+  if (!payload.telefone) {
+    const phoneMatch = textNorm.match(
+      /(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/
+    );
+    if (phoneMatch) {
+      payload.telefone = phoneMatch[0].trim();
+      markMatched('telefone');
+    }
+  }
+
+  if (!payload.zip_code) {
+    const zipMatch = textNorm.match(/\b(06\d{3})\b/);
+    if (zipMatch) {
+      payload.zip_code = zipMatch[1];
+      markMatched('zip_code');
+      if (!payload.cidade) {
+        const deduced = inferConnecticutCityFromZip(zipMatch[1]);
+        if (deduced) {
+          payload.cidade = deduced;
+        }
+      }
+    }
+  }
+
+  if (payload.quartos === null) {
+    const bedMatch = textNorm.match(
+      /\b(\d+\+?)\s*(?:bed(?:room)?s?|bd|br|quartos?)\b/i
+    );
+    if (bedMatch) {
+      const beds = parseRoomCount(bedMatch[1]);
+      if (beds !== null) {
+        payload.quartos = beds;
+        markMatched('quartos');
+      }
+    }
+  }
+
+  if (payload.banheiros === null) {
+    const bathMatch = textNorm.match(
+      /\b(\d+(?:[.,]5)?\+?)\s*(?:bath(?:room)?s?|ba|banheiros?)\b/i
+    );
+    if (bathMatch) {
+      const baths = parseRoomCount(bathMatch[1]);
+      if (baths !== null) {
+        payload.banheiros = baths;
+        markMatched('banheiros');
+      }
+    }
+  }
+
+  if (payload.tipo === 'nao_informado') {
+    if (/\bmove[-\s]*(?:in|out)\b/i.test(textNorm)) {
+      payload.tipo = 'move_in_out';
+      markMatched('tipo');
+    } else if (/\bdeep\s*clean(?:ing)?\b/i.test(textNorm)) {
+      payload.tipo = 'deep_clean';
+      markMatched('tipo');
+    }
+  }
+
+  if (payload.frequencia === 'nao_informado') {
+    const freeFreq = parseFrequencyValue(textNorm);
+    if (freeFreq !== 'nao_informado') {
+      payload.frequencia = freeFreq;
+      markMatched('frequencia');
+      if (
+        payload.tipo === 'nao_informado' &&
+        (freeFreq === 'semanal' || freeFreq === 'quinzenal' || freeFreq === 'mensal')
+      ) {
+        payload.tipo = 'recorrente';
+      }
+    }
+  }
+
+  if (!payload.nome) {
+    const nameMatch = textNorm.match(
+      /(?:my\s+name\s+is|i'?m|meu\s+nome\s+[eé])\s+([A-ZÀ-ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-ÿ][a-zà-ÿ]+)?)/i
+    );
+    if (nameMatch) {
+      payload.nome = nameMatch[1].trim();
+      markMatched('nome');
+    }
+  }
+
   // Varredura extra para menção de promoção/desconto em linhas soltas ou se ainda não detectada
   if (!payload.promocao) {
     const promo = extractPromoDetails('', rawText);

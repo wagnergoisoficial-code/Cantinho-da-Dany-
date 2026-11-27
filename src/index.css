@@ -7,6 +7,8 @@
   --color-brand: #0B6273;
   --color-brand-hover: #084E5C;
   --color-brand-soft: #EAF4F6;
+  --color-sidebar: #0C232B;
+  --color-canvas: #F3F6F7;
 }
 
 @layer base {
@@ -14,17 +16,22 @@
   body {
     overflow-x: hidden;
     -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
   }
 
   body {
     font-family: var(--font-sans);
-    background-color: #f8fafc;
-    color: #0f172a;
+    background-color: var(--color-canvas);
+    color: #0F172A;
     padding-bottom: env(safe-area-inset-bottom);
   }
 
-  h1, h2, h3, h4 {
+  h1,
+  h2,
+  h3,
+  h4 {
     font-family: var(--font-display);
+    text-wrap: balance;
   }
 
   button,
@@ -35,13 +42,37 @@
     touch-action: manipulation;
   }
 
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid rgba(11, 98, 115, 0.45);
+    outline-offset: 2px;
+  }
+
   input,
   select,
   textarea {
     font-size: 16px;
   }
+
+  @media (min-width: 640px) {
+    input,
+    select,
+    textarea {
+      font-size: 14px;
+    }
+  }
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  body {
+    scroll-behavior: auto;
+  }
 }

@@ -1,0 +1,772 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Helpers
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAuthorizedUser() {
+      return isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.email is string &&
+        request.auth.token.email.size() <= 160 &&
+        request.auth.token.email.lower() in [
+          'wagnergoisoficial@gmail.com',
+          'danycleanenpro@gmail.com'
+        ];
+    }
+
+    function isValidId(id) {
+      return id is string &&
+        id.size() >= 1 &&
+        id.size() <= 128 &&
+        id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidWorkspaceId(workspaceId) {
+      return isValidId(workspaceId) && workspaceId == 'dany_clean_pro';
+    }
+
+    function workspaceExists(workspaceId) {
+      return exists(/databases/$(database)/documents/workspaces/$(workspaceId));
+    }
+
+    function isBoundedString(val, maxLen) {
+      return val is string && val.size() <= maxLen;
+    }
+
+    function isNonEmptyString(val, maxLen) {
+      return val is string && val.size() >= 1 && val.size() <= maxLen;
+    }
+
+    function isOptionalString(val, maxLen) {
+      return val == null || (val is string && val.size() <= maxLen);
+    }
+
+    function isNonNegNumber(val) {
+      return (val is int || val is float) && val >= 0;
+    }
+
+    function isOptionalNonNegNumber(val) {
+      return val == null || isNonNegNumber(val);
+    }
+
+    function hasValidSyncMetadata(data, workspaceId) {
+      return data.workspaceId == workspaceId &&
+        data.schemaVersion is int &&
+        data.schemaVersion >= 1 &&
+        data.recordVersion is int &&
+        data.recordVersion >= 1 &&
+        isNonEmptyString(data.updatedAt, 64) &&
+        data.serverUpdatedAt == request.time &&
+        isNonEmptyString(data.updatedByEmail, 160) &&
+        data.updatedByEmail.lower() == request.auth.token.email.lower();
+    }
+
+    // 3. Validation Blueprints
+    function isValidWorkspace(data, workspaceId) {
+      return data.keys().hasAll([
+          'workspaceId',
+          'name',
+          'ownerEmail',
+          'schemaVersion',
+          'recordVersion',
+          'updatedByEmail',
+          'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'workspaceId',
+          'name',
+          'ownerEmail',
+          'schemaVersion',
+          'recordVersion',
+          'updatedByEmail',
+          'serverUpdatedAt'
+        ]) &&
+        data.workspaceId == workspaceId &&
+        isNonEmptyString(data.name, 120) &&
+        isNonEmptyString(data.ownerEmail, 160) &&
+        data.ownerEmail.lower() in [
+          'wagnergoisoficial@gmail.com',
+          'danycleanenpro@gmail.com'
+        ] &&
+        data.schemaVersion is int &&
+        data.schemaVersion == 1 &&
+        data.recordVersion is int &&
+        data.recordVersion >= 1 &&
+        isNonEmptyString(data.updatedByEmail, 160) &&
+        data.updatedByEmail.lower() == request.auth.token.email.lower() &&
+        data.serverUpdatedAt == request.time;
+    }
+
+    function isValidPricingSettings(data, workspaceId) {
+      return data.keys().hasAll([
+          'workspaceId',
+          'schemaVersion',
+          'recordVersion',
+          'updatedAt',
+          'serverUpdatedAt',
+          'updatedByEmail',
+          'tiers',
+          'moveInOutPercent',
+          'conditionModeratePercent',
+          'conditionHeavyPercent',
+          'petOnePrice',
+          'petTwoPlusPrice',
+          'deepCleanRangeMarginPercent',
+          'defaultDayOption1',
+          'defaultDayOption2',
+          'cityFixedDays',
+          'serviceBaseLocation',
+          'serviceMaxRadiusMiles',
+          'servedCities',
+          'companyFacts',
+          'extras',
+          'visitaAvulsa',
+          'negotiation'
+        ]) &&
+        data.keys().hasOnly([
+          'workspaceId',
+          'schemaVersion',
+          'recordVersion',
+          'updatedAt',
+          'serverUpdatedAt',
+          'updatedByEmail',
+          'tiers',
+          'moveInOutPercent',
+          'conditionModeratePercent',
+          'conditionHeavyPercent',
+          'petOnePrice',
+          'petTwoPlusPrice',
+          'deepCleanRangeMarginPercent',
+          'defaultDayOption1',
+          'defaultDayOption2',
+          'cityFixedDays',
+          'serviceBaseLocation',
+          'serviceMaxRadiusMiles',
+          'servedCities',
+          'companyFacts',
+          'extras',
+          'visitaAvulsa',
+          'negotiation'
+        ]) &&
+        hasValidSyncMetadata(data, workspaceId) &&
+        data.tiers is list &&
+        data.tiers.size() == 8 &&
+        data.tiers[0] is map &&
+        data.tiers[7] is map &&
+        isNonNegNumber(data.moveInOutPercent) &&
+        isNonNegNumber(data.conditionModeratePercent) &&
+        isNonNegNumber(data.conditionHeavyPercent) &&
+        isNonNegNumber(data.petOnePrice) &&
+        isNonNegNumber(data.petTwoPlusPrice) &&
+        isNonNegNumber(data.deepCleanRangeMarginPercent) &&
+        isNonEmptyString(data.defaultDayOption1, 40) &&
+        isNonEmptyString(data.defaultDayOption2, 40) &&
+        data.cityFixedDays is list &&
+        data.cityFixedDays.size() <= 100 &&
+        (data.cityFixedDays.size() == 0 || data.cityFixedDays[0] is map) &&
+        isNonEmptyString(data.serviceBaseLocation, 200) &&
+        isNonNegNumber(data.serviceMaxRadiusMiles) &&
+        data.serviceMaxRadiusMiles > 0 &&
+        data.servedCities is list &&
+        data.servedCities.size() <= 200 &&
+        (data.servedCities.size() == 0 || isBoundedString(data.servedCities[0], 100)) &&
+        isBoundedString(data.companyFacts, 12000) &&
+        data.extras is map &&
+        data.extras.keys().hasAll([
+          'forno',
+          'geladeira',
+          'janelaPorUnidade',
+          'armarios',
+          'roupaDeCama'
+        ]) &&
+        data.extras.keys().hasOnly([
+          'forno',
+          'geladeira',
+          'janelaPorUnidade',
+          'armarios',
+          'roupaDeCama'
+        ]) &&
+        isNonNegNumber(data.extras.forno) &&
+        isNonNegNumber(data.extras.geladeira) &&
+        isNonNegNumber(data.extras.janelaPorUnidade) &&
+        isNonNegNumber(data.extras.armarios) &&
+        isNonNegNumber(data.extras.roupaDeCama) &&
+        data.visitaAvulsa is map &&
+        data.visitaAvulsa.keys().hasAll([
+          'fogaoEForno',
+          'geladeira',
+          'fornoEGeladeira',
+          'soJanelasMinimo'
+        ]) &&
+        data.visitaAvulsa.keys().hasOnly([
+          'fogaoEForno',
+          'geladeira',
+          'fornoEGeladeira',
+          'soJanelasMinimo'
+        ]) &&
+        isNonNegNumber(data.visitaAvulsa.fogaoEForno) &&
+        isNonNegNumber(data.visitaAvulsa.geladeira) &&
+        isNonNegNumber(data.visitaAvulsa.fornoEGeladeira) &&
+        isNonNegNumber(data.visitaAvulsa.soJanelasMinimo) &&
+        data.negotiation is map &&
+        data.negotiation.keys().hasAll([
+          'competitiveDiscountPercent',
+          'minimumFloorPercent',
+          'twoHourPackagePrice',
+          'defaultHibernateDate',
+          'seasonalPromo'
+        ]) &&
+        data.negotiation.keys().hasOnly([
+          'competitiveDiscountPercent',
+          'minimumFloorPercent',
+          'twoHourPackagePrice',
+          'defaultHibernateDate',
+          'seasonalPromo'
+        ]) &&
+        isNonNegNumber(data.negotiation.competitiveDiscountPercent) &&
+        isNonNegNumber(data.negotiation.minimumFloorPercent) &&
+        isNonNegNumber(data.negotiation.twoHourPackagePrice) &&
+        isBoundedString(data.negotiation.defaultHibernateDate, 40) &&
+        data.negotiation.seasonalPromo is map &&
+        data.negotiation.seasonalPromo.keys().hasAll([
+          'active',
+          'name',
+          'percent',
+          'expiresAt'
+        ]) &&
+        data.negotiation.seasonalPromo.keys().hasOnly([
+          'active',
+          'name',
+          'percent',
+          'expiresAt'
+        ]) &&
+        data.negotiation.seasonalPromo.active is bool &&
+        isBoundedString(data.negotiation.seasonalPromo.name, 120) &&
+        isNonNegNumber(data.negotiation.seasonalPromo.percent) &&
+        isBoundedString(data.negotiation.seasonalPromo.expiresAt, 40);
+    }
+
+    function isValidLeadQuote(data, workspaceId, leadId) {
+      return data.keys().hasAll([
+          'workspaceId',
+          'schemaVersion',
+          'recordVersion',
+          'updatedAt',
+          'serverUpdatedAt',
+          'updatedByEmail',
+          'id',
+          'createdAt',
+          'clientName',
+          'phone',
+          'email',
+          'streetAddress',
+          'zipCode',
+          'city',
+          'desiredDate',
+          'bestContact',
+          'origin',
+          'adCode',
+          'notes',
+          'squareFeet',
+          'houseLabel',
+          'effectiveHouseLabel',
+          'serviceType',
+          'frequency',
+          'visitaAvulsaOption',
+          'houseCondition',
+          'petsOption',
+          'tablePricePrimary',
+          'promoPercent',
+          'promoName',
+          'finalPricePrimary',
+          'tablePriceRecurring',
+          'finalPriceRecurring',
+          'aiConfidence',
+          'aiEstado',
+          'status',
+          'lossReason',
+          'stage',
+          'objection',
+          'concession',
+          'followUpStep',
+          'nextFollowUpDate',
+          'firstOutboundAt',
+          'firstInboundAt',
+          'lastOutboundAt',
+          'lastInboundAt',
+          'consecutiveOutboundCount',
+          'blockedUntilDate',
+          'hibernateUntilDate',
+          'priceAlreadySent',
+          'lastGeneratedMessage',
+          'interactionHistory',
+          'mapsInsight',
+          'dayOption1',
+          'dayOption2'
+        ]) &&
+        data.keys().hasOnly([
+          'workspaceId',
+          'schemaVersion',
+          'recordVersion',
+          'updatedAt',
+          'serverUpdatedAt',
+          'updatedByEmail',
+          'id',
+          'createdAt',
+          'clientName',
+          'phone',
+          'email',
+          'streetAddress',
+          'zipCode',
+          'city',
+          'desiredDate',
+          'bestContact',
+          'origin',
+          'adCode',
+          'notes',
+          'squareFeet',
+          'houseLabel',
+          'effectiveHouseLabel',
+          'serviceType',
+          'frequency',
+          'visitaAvulsaOption',
+          'houseCondition',
+          'petsOption',
+          'tablePricePrimary',
+          'promoPercent',
+          'promoName',
+          'finalPricePrimary',
+          'tablePriceRecurring',
+          'finalPriceRecurring',
+          'aiConfidence',
+          'aiEstado',
+          'status',
+          'lossReason',
+          'stage',
+          'objection',
+          'concession',
+          'followUpStep',
+          'nextFollowUpDate',
+          'firstOutboundAt',
+          'firstInboundAt',
+          'lastOutboundAt',
+          'lastInboundAt',
+          'consecutiveOutboundCount',
+          'blockedUntilDate',
+          'hibernateUntilDate',
+          'priceAlreadySent',
+          'lastGeneratedMessage',
+          'interactionHistory',
+          'mapsInsight',
+          'dayOption1',
+          'dayOption2'
+        ]) &&
+        hasValidSyncMetadata(data, workspaceId) &&
+        isValidId(data.id) &&
+        data.id == leadId &&
+        isNonEmptyString(data.createdAt, 64) &&
+        isNonEmptyString(data.clientName, 200) &&
+        isBoundedString(data.phone, 80) &&
+        isBoundedString(data.email, 180) &&
+        isBoundedString(data.streetAddress, 250) &&
+        isBoundedString(data.zipCode, 32) &&
+        isBoundedString(data.city, 120) &&
+        isBoundedString(data.desiredDate, 120) &&
+        isBoundedString(data.bestContact, 120) &&
+        isBoundedString(data.origin, 64) &&
+        isBoundedString(data.adCode, 120) &&
+        isBoundedString(data.notes, 6000) &&
+        isOptionalNonNegNumber(data.squareFeet) &&
+        isNonEmptyString(data.houseLabel, 120) &&
+        isNonEmptyString(data.effectiveHouseLabel, 120) &&
+        data.serviceType in [
+          'recorrente',
+          'primeira_avulsa',
+          'deep_clean',
+          'move_in_out',
+          'visita_avulsa'
+        ] &&
+        (data.frequency == null || data.frequency in ['semanal', 'quinzenal', 'mensal']) &&
+        (data.visitaAvulsaOption == null || data.visitaAvulsaOption in ['fogao_forno', 'geladeira', 'forno_geladeira', 'so_janelas']) &&
+        (data.houseCondition == null || data.houseCondition in ['padrao', 'moderado', 'pesado']) &&
+        (data.petsOption == null || data.petsOption in ['nenhum', 'um', 'dois_ou_mais']) &&
+        isNonNegNumber(data.tablePricePrimary) &&
+        isOptionalNonNegNumber(data.promoPercent) &&
+        isBoundedString(data.promoName, 120) &&
+        isNonNegNumber(data.finalPricePrimary) &&
+        isOptionalNonNegNumber(data.tablePriceRecurring) &&
+        isOptionalNonNegNumber(data.finalPriceRecurring) &&
+        isOptionalNonNegNumber(data.aiConfidence) &&
+        (data.aiEstado == null || data.aiEstado in ['padrao', 'moderado', 'pesado']) &&
+        data.status in ['Enviado', 'Fechou', 'Perdeu'] &&
+        isBoundedString(data.lossReason, 500) &&
+        data.stage in [
+          'Novo',
+          'Aguardando fotos',
+          'Orçamento enviado',
+          'Objeção',
+          'Sem resposta',
+          'Agendado',
+          'Cliente fixo',
+          'Perdido',
+          'Hibernar'
+        ] &&
+        isOptionalString(data.objection, 64) &&
+        (data.concession == null || data.concession is map) &&
+        data.followUpStep in [0, 2, 5, 10, 'hibernar'] &&
+        isOptionalString(data.nextFollowUpDate, 64) &&
+        isOptionalString(data.firstOutboundAt, 64) &&
+        isOptionalString(data.firstInboundAt, 64) &&
+        isOptionalString(data.lastOutboundAt, 64) &&
+        isOptionalString(data.lastInboundAt, 64) &&
+        isNonNegNumber(data.consecutiveOutboundCount) &&
+        isOptionalString(data.blockedUntilDate, 64) &&
+        isOptionalString(data.hibernateUntilDate, 64) &&
+        data.priceAlreadySent is bool &&
+        (data.lastGeneratedMessage == null || data.lastGeneratedMessage is map) &&
+        data.interactionHistory is list &&
+        data.interactionHistory.size() <= 500 &&
+        (data.interactionHistory.size() == 0 || data.interactionHistory[0] is map) &&
+        (data.mapsInsight == null || data.mapsInsight is map) &&
+        isBoundedString(data.dayOption1, 40) &&
+        isBoundedString(data.dayOption2, 40);
+    }
+
+    function isValidPotentialHelper(data, workspaceId, helperId) {
+      return data.keys().hasAll([
+          'workspaceId',
+          'schemaVersion',
+          'recordVersion',
+          'updatedAt',
+          'serverUpdatedAt',
+          'updatedByEmail',
+          'id',
+          'name',
+          'phone',
+          'email',
+          'city',
+          'notes',
+          'savedAt',
+          'sourceLeadId'
+        ]) &&
+        data.keys().hasOnly([
+          'workspaceId',
+          'schemaVersion',
+          'recordVersion',
+          'updatedAt',
+          'serverUpdatedAt',
+          'updatedByEmail',
+          'id',
+          'name',
+          'phone',
+          'email',
+          'city',
+          'notes',
+          'savedAt',
+          'sourceLeadId'
+        ]) &&
+        hasValidSyncMetadata(data, workspaceId) &&
+        isValidId(data.id) &&
+        data.id == helperId &&
+        isNonEmptyString(data.name, 200) &&
+        isBoundedString(data.phone, 80) &&
+        isBoundedString(data.email, 180) &&
+        isBoundedString(data.city, 120) &&
+        isBoundedString(data.notes, 4000) &&
+        isNonEmptyString(data.savedAt, 64) &&
+        isOptionalString(data.sourceLeadId, 128);
+    }
+
+    function isValidSyncMeta(data, workspaceId) {
+      return data.keys().hasAll([
+          'workspaceId',
+          'schemaVersion',
+          'recordVersion',
+          'lastBackupAt',
+          'migrationCompletedAt',
+          'migratedByEmail',
+          'migratedLeadCount',
+          'migratedHelperCount',
+          'updatedAt',
+          'serverUpdatedAt',
+          'updatedByEmail'
+        ]) &&
+        data.keys().hasOnly([
+          'workspaceId',
+          'schemaVersion',
+          'recordVersion',
+          'lastBackupAt',
+          'migrationCompletedAt',
+          'migratedByEmail',
+          'migratedLeadCount',
+          'migratedHelperCount',
+          'updatedAt',
+          'serverUpdatedAt',
+          'updatedByEmail'
+        ]) &&
+        hasValidSyncMetadata(data, workspaceId) &&
+        isOptionalString(data.lastBackupAt, 64) &&
+        isOptionalString(data.migrationCompletedAt, 64) &&
+        isOptionalString(data.migratedByEmail, 160) &&
+        data.migratedLeadCount is int &&
+        data.migratedLeadCount >= 0 &&
+        data.migratedHelperCount is int &&
+        data.migratedHelperCount >= 0;
+    }
+
+    // 4. Connection Health Probe (authenticated startup check only)
+    match /test/connection {
+      allow get: if isAuthorizedUser();
+      allow list, write: if false;
+    }
+
+    // 5. Workspace Root & Subcollections
+    match /workspaces/{workspaceId} {
+      allow get: if isAuthorizedUser() && isValidWorkspaceId(workspaceId);
+      allow list: if isAuthorizedUser() && existing().workspaceId == 'dany_clean_pro';
+      allow create: if isAuthorizedUser() &&
+        isValidWorkspaceId(workspaceId) &&
+        isValidWorkspace(incoming(), workspaceId) &&
+        incoming().recordVersion == 1;
+      allow update: if isAuthorizedUser() &&
+        isValidWorkspaceId(workspaceId) &&
+        isValidWorkspace(incoming(), workspaceId) &&
+        incoming().workspaceId == existing().workspaceId &&
+        incoming().ownerEmail == existing().ownerEmail &&
+        incoming().recordVersion == existing().recordVersion + 1 &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name',
+          'recordVersion',
+          'updatedByEmail',
+          'serverUpdatedAt'
+        ]);
+      allow delete: if false;
+
+      match /settings/{settingId} {
+        allow get: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          settingId == 'pricing' &&
+          workspaceExists(workspaceId);
+        allow list: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          existing().workspaceId == workspaceId;
+        allow create: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          settingId == 'pricing' &&
+          isValidPricingSettings(incoming(), workspaceId) &&
+          workspaceExists(workspaceId) &&
+          incoming().recordVersion == 1;
+        allow update: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          settingId == 'pricing' &&
+          isValidPricingSettings(incoming(), workspaceId) &&
+          workspaceExists(workspaceId) &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().recordVersion == existing().recordVersion + 1 &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'schemaVersion',
+            'recordVersion',
+            'updatedAt',
+            'serverUpdatedAt',
+            'updatedByEmail',
+            'tiers',
+            'moveInOutPercent',
+            'conditionModeratePercent',
+            'conditionHeavyPercent',
+            'petOnePrice',
+            'petTwoPlusPrice',
+            'deepCleanRangeMarginPercent',
+            'defaultDayOption1',
+            'defaultDayOption2',
+            'cityFixedDays',
+            'serviceBaseLocation',
+            'serviceMaxRadiusMiles',
+            'servedCities',
+            'companyFacts',
+            'extras',
+            'visitaAvulsa',
+            'negotiation'
+          ]);
+        allow delete: if false;
+      }
+
+      match /leads/{leadId} {
+        allow get: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          isValidId(leadId) &&
+          workspaceExists(workspaceId);
+        allow list: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          existing().workspaceId == workspaceId;
+        allow create: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          isValidId(leadId) &&
+          isValidLeadQuote(incoming(), workspaceId, leadId) &&
+          workspaceExists(workspaceId) &&
+          incoming().recordVersion == 1;
+        allow update: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          isValidId(leadId) &&
+          isValidLeadQuote(incoming(), workspaceId, leadId) &&
+          workspaceExists(workspaceId) &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().id == existing().id &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().recordVersion == existing().recordVersion + 1 &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'schemaVersion',
+            'recordVersion',
+            'updatedAt',
+            'serverUpdatedAt',
+            'updatedByEmail',
+            'clientName',
+            'phone',
+            'email',
+            'streetAddress',
+            'zipCode',
+            'city',
+            'desiredDate',
+            'bestContact',
+            'origin',
+            'adCode',
+            'notes',
+            'squareFeet',
+            'houseLabel',
+            'effectiveHouseLabel',
+            'serviceType',
+            'frequency',
+            'visitaAvulsaOption',
+            'houseCondition',
+            'petsOption',
+            'tablePricePrimary',
+            'promoPercent',
+            'promoName',
+            'finalPricePrimary',
+            'tablePriceRecurring',
+            'finalPriceRecurring',
+            'aiConfidence',
+            'aiEstado',
+            'status',
+            'lossReason',
+            'stage',
+            'objection',
+            'concession',
+            'followUpStep',
+            'nextFollowUpDate',
+            'firstOutboundAt',
+            'firstInboundAt',
+            'lastOutboundAt',
+            'lastInboundAt',
+            'consecutiveOutboundCount',
+            'blockedUntilDate',
+            'hibernateUntilDate',
+            'priceAlreadySent',
+            'lastGeneratedMessage',
+            'interactionHistory',
+            'mapsInsight',
+            'dayOption1',
+            'dayOption2'
+          ]);
+        allow delete: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          isValidId(leadId) &&
+          workspaceExists(workspaceId);
+      }
+
+      match /helpers/{helperId} {
+        allow get: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          isValidId(helperId) &&
+          workspaceExists(workspaceId);
+        allow list: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          existing().workspaceId == workspaceId;
+        allow create: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          isValidId(helperId) &&
+          isValidPotentialHelper(incoming(), workspaceId, helperId) &&
+          workspaceExists(workspaceId) &&
+          incoming().recordVersion == 1;
+        allow update: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          isValidId(helperId) &&
+          isValidPotentialHelper(incoming(), workspaceId, helperId) &&
+          workspaceExists(workspaceId) &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().id == existing().id &&
+          incoming().savedAt == existing().savedAt &&
+          incoming().recordVersion == existing().recordVersion + 1 &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'schemaVersion',
+            'recordVersion',
+            'updatedAt',
+            'serverUpdatedAt',
+            'updatedByEmail',
+            'name',
+            'phone',
+            'email',
+            'city',
+            'notes',
+            'sourceLeadId'
+          ]);
+        allow delete: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          isValidId(helperId) &&
+          workspaceExists(workspaceId);
+      }
+
+      match /meta/{metaId} {
+        allow get: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          metaId == 'sync' &&
+          workspaceExists(workspaceId);
+        allow list: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          existing().workspaceId == workspaceId;
+        allow create: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          metaId == 'sync' &&
+          isValidSyncMeta(incoming(), workspaceId) &&
+          workspaceExists(workspaceId) &&
+          incoming().recordVersion == 1;
+        allow update: if isAuthorizedUser() &&
+          isValidWorkspaceId(workspaceId) &&
+          metaId == 'sync' &&
+          isValidSyncMeta(incoming(), workspaceId) &&
+          workspaceExists(workspaceId) &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().recordVersion == existing().recordVersion + 1 &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'schemaVersion',
+            'recordVersion',
+            'lastBackupAt',
+            'migrationCompletedAt',
+            'migratedByEmail',
+            'migratedLeadCount',
+            'migratedHelperCount',
+            'updatedAt',
+            'serverUpdatedAt',
+            'updatedByEmail'
+          ]);
+        allow delete: if false;
+      }
+    }
+  }
+}

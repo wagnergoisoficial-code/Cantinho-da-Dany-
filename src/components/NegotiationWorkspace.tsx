@@ -45,6 +45,7 @@ import { resolveDateOptionsForCity } from '../utils/dateOptions';
 import {
   CalendarWorkspaceBridge,
   countEventsByDateKey,
+  evaluateCalendarSlotAvailability,
 } from '../utils/googleCalendarApi';
 import { isCityInServedList } from '../utils/messageBuilder';
 import { ConversationThreadPanel } from './ConversationThreadPanel';
@@ -64,8 +65,9 @@ import {
   getNextFollowUpAfterStep,
   isSeasonalPromoValid,
   validateNegotiationCompliance,
-  validateSimplePunctuation,
+  validatePortugueseCompliance,
 } from '../utils/negotiationEngine';
+import { resolveLeadPricingFromEngine } from '../utils/pricingEngine';
 
 interface NegotiationWorkspaceProps {
   lead: LeadQuoteRecord;
@@ -104,6 +106,10 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
   calendarIntegration,
 }) => {
   const today = getLocalDateString();
+  const resolvedPricing = useMemo(
+    () => resolveLeadPricingFromEngine(lead, config),
+    [lead, config]
+  );
   const { idealPrice, competitivePrice, minimumPrice } =
     computeNegotiationPrices(lead, config);
   const existingClientConcession = findClientConcession(lead, allLeads);
@@ -170,6 +176,18 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
     [calendarIntegration.events]
   );
 
+  const workspaceCalendarAvailability = useMemo(() => {
+    const durationHours =
+      lead.serviceType === 'deep_clean' || lead.serviceType === 'move_in_out'
+        ? 4
+        : 3;
+    return evaluateCalendarSlotAvailability(
+      calendarIntegration,
+      resolvedSuggestedDates.dates,
+      durationHours
+    );
+  }, [calendarIntegration, resolvedSuggestedDates.dates, lead.serviceType]);
+
   const selectedCalendarName = useMemo(() => {
     const match = calendarIntegration.calendars.find(
       (c) => c.id === calendarIntegration.selectedCalendarId
@@ -187,12 +205,17 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
     setSentFeedback(null);
   }, [lead.id, competitivePrice]);
 
+  const calendarVerified = workspaceCalendarAvailability.verifiedAvailable;
   const sendPermission = evaluateSendPermission(lead);
   const nameCheck = checkNameMismatch(lead.clientName, englishMsg);
-  const compliance = validateNegotiationCompliance(englishMsg);
-  const ptPunctuationIssues = validateSimplePunctuation(portugueseMsg);
+  const compliance = validateNegotiationCompliance(englishMsg, {
+    calendarVerified,
+  });
+  const ptIssues = validatePortugueseCompliance(portugueseMsg, {
+    calendarVerified,
+  });
   const allMessageViolations = Array.from(
-    new Set([...compliance.violations, ...ptPunctuationIssues])
+    new Set([...compliance.violations, ...ptIssues])
   );
   const messageCopyBlocked =
     !englishMsg.trim() || allMessageViolations.length > 0;
@@ -421,9 +444,17 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
           cityWeekdayForProof: resolvedDates.proofWeekdayEn,
           dayOption1: resolvedDates.dates[0].en,
           dayOption2: resolvedDates.dates[1].en,
+          calendarVerified,
+          verifiedSlotsEn: calendarVerified
+            ? workspaceCalendarAvailability.verifiedSlots.map((s) => s.en)
+            : [],
+          verifiedSlotsPt: calendarVerified
+            ? workspaceCalendarAvailability.verifiedSlots.map((s) => s.pt)
+            : [],
           companyFacts: config.companyFacts,
           houseLabel: lead.effectiveHouseLabel || lead.houseLabel,
           serviceType: SERVICE_TYPE_LABELS[lead.serviceType],
+          isRecurring: resolvedPricing.isRecurring,
           frequency: lead.frequency ? FREQUENCY_LABELS[lead.frequency] : null,
           desiredDate: lead.desiredDate,
           notes: lead.notes,
@@ -431,7 +462,9 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
           followUpStep: lead.followUpStep,
           objection: lead.objection,
           priceAlreadySent: lead.priceAlreadySent,
-          finalPricePrimary: lead.finalPricePrimary,
+          finalPricePrimary: resolvedPricing.initialFinalPrice,
+          finalPriceRecurring: resolvedPricing.recurringFinalPrice,
+          recurringPriceStatus: resolvedPricing.recurringStatus,
           idealPrice,
           competitivePrice,
           minimumPrice,
@@ -632,6 +665,22 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
               <span>{lead.city || 'Cidade não informada'}</span>
               <span className="text-slate-300">·</span>
               <span>{houseSizeLabel}</span>
+              <span className="text-slate-300">·</span>
+              <span className="font-mono font-semibold text-[#0B6273]">
+                Inicial: ${resolvedPricing.initialFinalPrice}
+              </span>
+              {resolvedPricing.isRecurring && (
+                <>
+                  <span className="text-slate-300">·</span>
+                  <span className="font-mono font-medium text-slate-800">
+                    Recorrente:{' '}
+                    {resolvedPricing.recurringStatus === 'available' &&
+                    resolvedPricing.recurringFinalPrice !== null
+                      ? `$${resolvedPricing.recurringFinalPrice}/visita`
+                      : 'a confirmar'}
+                  </span>
+                </>
+              )}
               {lead.origin && (
                 <>
                   <span className="text-slate-300">·</span>
@@ -770,28 +819,35 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
       {/* Disponibilidade real e agendamento no Google Calendar */}
       <section className="bg-white border border-slate-200 rounded-xl p-4 sm:px-6 sm:py-4 space-y-3">
         {!calendarIntegration.connected ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-start gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-[#EAF4F6] text-[#0B6273] flex items-center justify-center shrink-0 mt-0.5">
-                <Calendar className="w-4 h-4" />
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-[#EAF4F6] text-[#0B6273] flex items-center justify-center shrink-0 mt-0.5">
+                  <Calendar className="w-4 h-4" />
+                </div>
+                <div className="text-xs text-slate-600">
+                  <strong className="text-slate-900 block text-sm">
+                    Google Calendar
+                  </strong>
+                  Conecte para ver sua disponibilidade real nas datas sugeridas e
+                  agendar a limpeza direto na agenda.
+                </div>
               </div>
-              <div className="text-xs text-slate-600">
-                <strong className="text-slate-900 block text-sm">
-                  Google Calendar
-                </strong>
-                Conecte para ver sua disponibilidade real nas datas sugeridas e
-                agendar a limpeza direto na agenda.
-              </div>
+              <GoogleSignInButton
+                onClick={calendarIntegration.onSignIn}
+                disabled={calendarIntegration.isLoggingIn}
+                label={
+                  calendarIntegration.isLoggingIn
+                    ? 'Conectando...'
+                    : 'Sign in with Google'
+                }
+              />
             </div>
-            <GoogleSignInButton
-              onClick={calendarIntegration.onSignIn}
-              disabled={calendarIntegration.isLoggingIn}
-              label={
-                calendarIntegration.isLoggingIn
-                  ? 'Conectando...'
-                  : 'Sign in with Google'
-              }
-            />
+            {calendarIntegration.error && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs font-medium text-red-700">
+                {calendarIntegration.error}
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
@@ -826,10 +882,30 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
               </div>
             </div>
 
+            {calendarIntegration.error && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs font-medium text-red-700 flex flex-wrap items-center justify-between gap-2">
+                <span>{calendarIntegration.error}</span>
+                <GoogleSignInButton
+                  onClick={calendarIntegration.onSignIn}
+                  disabled={calendarIntegration.isLoggingIn}
+                  label="Reconectar"
+                />
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {resolvedSuggestedDates.dates.map((dateOpt) => {
                 const count = (calendarEventsByDate[dateOpt.dateKey] || [])
                   .length;
+                const isSyncedOk =
+                  calendarIntegration.connected &&
+                  Boolean(calendarIntegration.syncSucceeded) &&
+                  !calendarIntegration.isLoading &&
+                  !calendarIntegration.error;
+                const verifiedSlot =
+                  workspaceCalendarAvailability.verifiedSlots.find(
+                    (s) => s.dateKey === dateOpt.dateKey
+                  );
                 return (
                   <button
                     key={dateOpt.dateKey}
@@ -842,18 +918,28 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
                         {dateOpt.pt}
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        {dateOpt.en}
+                        {verifiedSlot ? verifiedSlot.pt : dateOpt.en}
                       </div>
                     </div>
                     <span
                       className={`text-xs font-semibold px-2 py-0.5 rounded border ${
-                        count === 0
+                        !isSyncedOk
+                          ? 'bg-slate-100 text-slate-600 border-slate-300'
+                          : verifiedSlot
                           ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           : 'bg-amber-50 text-amber-800 border-amber-200'
                       }`}
                     >
-                      {count === 0
-                        ? 'Livre'
+                      {calendarIntegration.isLoading
+                        ? 'Verificando...'
+                        : calendarIntegration.error
+                        ? 'Erro na agenda'
+                        : !isSyncedOk
+                        ? 'A confirmar'
+                        : verifiedSlot
+                        ? count === 0
+                          ? `Livre (${verifiedSlot.startTime})`
+                          : `${count} ${count === 1 ? 'evento' : 'eventos'} · livre ${verifiedSlot.startTime}`
                         : `${count} ${count === 1 ? 'evento' : 'eventos'}`}
                     </span>
                   </button>
@@ -875,6 +961,8 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
       <ConversationThreadPanel
         lead={lead}
         config={config}
+        resolvedPricing={resolvedPricing}
+        calendarAvailability={workspaceCalendarAvailability}
         existingClientConcession={existingClientConcession}
         idealPrice={idealPrice}
         competitivePrice={competitivePrice}
@@ -916,7 +1004,7 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
               2. Calendário de follow-up automático
             </h3>
             <p className="text-xs text-slate-500">
-              Dia 0 → Dia 2 (garantia) → Dia 5 (prova social) → Dia 10 (opções
+              Dia 0 → Dia 2 (pagamento após ver limpo) → Dia 5 (prova social) → Dia 10 (opções
               1/2/3) → Hibernar.
             </p>
           </div>
@@ -1081,10 +1169,12 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
           </div>
         </div>
 
-        {/* Régua Ideal / Competitivo / Mínimo */}
+        {/* Régua Ideal / Competitivo / Mínimo (1ª limpeza) */}
         <div className="grid grid-cols-3 gap-3">
           <div className="p-3 rounded-lg border border-slate-200 bg-slate-50">
-            <span className="block text-xs text-slate-500">Preço Ideal</span>
+            <span className="block text-xs text-slate-500">
+              Preço Ideal (1ª limpeza)
+            </span>
             <span className="text-lg font-bold font-mono tabular-nums text-slate-900">
               ${idealPrice}
             </span>
@@ -1106,6 +1196,27 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
             </span>
           </div>
         </div>
+        {resolvedPricing.isRecurring && (
+          <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              <strong>Preço recorrente por visita</strong>{' '}
+              {lead.frequency ? `(${FREQUENCY_LABELS[lead.frequency]})` : ''}:{' '}
+              {resolvedPricing.recurringStatus === 'available' &&
+              resolvedPricing.recurringFinalPrice !== null ? (
+                <span className="font-mono font-bold text-[#0B6273]">
+                  ${resolvedPricing.recurringFinalPrice}/visita
+                </span>
+              ) : (
+                <span className="font-semibold text-amber-800">
+                  precisa ser confirmado com a Dani (registro sem recorrente confiável)
+                </span>
+              )}
+            </span>
+            <span className="text-[11px] text-slate-500">
+              Separado do valor inicial (${resolvedPricing.initialFinalPrice})
+            </span>
+          </div>
+        )}
 
         {/* Concessão já usada? Bloqueia outra */}
         {existingClientConcession ? (
@@ -1345,24 +1456,36 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
             <h3 className="text-base font-semibold text-slate-900">
               5. Gerador de mensagem (IA) e envio
             </h3>
-            {(() => {
-              const resolved = resolveDateOptionsForCity(
-                lead.city,
-                config.cityFixedDays,
-                lead.dayOption1 || config.defaultDayOption1,
-                lead.dayOption2 || config.defaultDayOption2
-              );
-              return (
-                <p className="text-xs text-slate-500">
-                  Até 60 palavras, com tradução em português. Datas para{' '}
+            <p className="text-xs text-slate-500">
+              {calendarVerified && workspaceCalendarAvailability.verifiedSlots.length ? (
+                <>
+                  Até 60 palavras, com tradução em português. Horários livres verificados no Google Calendar:{' '}
+                  <strong className="text-slate-700">
+                    {workspaceCalendarAvailability.verifiedSlots
+                      .map((s) => s.en)
+                      .join(' ou ')}
+                  </strong>
+                  .
+                </>
+              ) : (
+                <>
+                  Até 60 palavras, com tradução em português. Sugestões de datas para{' '}
                   {lead.city || 'esta cidade'}
-                  {resolved.isFixedCityDay ? ` (${resolved.fixedWeekdayPt})` : ''}:{' '}
-                  <strong className="text-slate-700">{resolved.dates[0].en}</strong>{' '}
+                  {resolvedSuggestedDates.isFixedCityDay
+                    ? ` (${resolvedSuggestedDates.fixedWeekdayPt})`
+                    : ''}
+                  :{' '}
+                  <strong className="text-slate-700">
+                    {resolvedSuggestedDates.dates[0].en}
+                  </strong>{' '}
                   ou{' '}
-                  <strong className="text-slate-700">{resolved.dates[1].en}</strong>.
-                </p>
-              );
-            })()}
+                  <strong className="text-slate-700">
+                    {resolvedSuggestedDates.dates[1].en}
+                  </strong>
+                  . Sem data e horário verificados na agenda, o rascunho pergunta a preferência e informa que a disponibilidade será confirmada.
+                </>
+              )}
+            </p>
           </div>
 
           <button
@@ -1540,6 +1663,7 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
       {calendarModalDateKey && (
         <LeadCalendarModal
           lead={lead}
+          config={config}
           defaultDateKey={calendarModalDateKey}
           calendarName={selectedCalendarName}
           existingEvents={calendarIntegration.events}

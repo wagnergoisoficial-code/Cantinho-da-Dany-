@@ -1,11 +1,6 @@
-// Token mantido apenas em memória React/JS (nunca em localStorage/sessionStorage).
-// O cookie HttpOnly assinado pelo servidor persiste no dispositivo entre recarregamentos.
-let memoryBearerToken: string | null = null;
-let onUnauthorizedCallback: (() => void) | null = null;
+import { getCurrentFirebaseIdToken } from './firebaseClient';
 
-export function setMemoryAuthToken(token: string | null): void {
-  memoryBearerToken = token;
-}
+let onUnauthorizedCallback: (() => void) | null = null;
 
 export function setOnUnauthorizedHandler(handler: (() => void) | null): void {
   onUnauthorizedCallback = handler;
@@ -15,17 +10,35 @@ export async function apiFetch(
   input: string,
   init: RequestInit = {}
 ): Promise<Response> {
-  const headers = new Headers(init.headers);
-  headers.set('X-Requested-With', 'DanyCleanPro');
-  if (memoryBearerToken && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${memoryBearerToken}`);
-  }
+  const buildHeaders = async (tokenOverride?: string | null) => {
+    const headers = new Headers(init.headers);
+    headers.set('X-Requested-With', 'DanyCleanPro');
+    if (!headers.has('Authorization')) {
+      const token =
+        tokenOverride !== undefined
+          ? tokenOverride
+          : await getCurrentFirebaseIdToken(false);
+      if (token) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+    }
+    return headers;
+  };
 
-  const response = await fetch(input, {
+  let response = await fetch(input, {
     ...init,
-    headers,
-    credentials: 'include',
+    headers: await buildHeaders(),
   });
+
+  if (response.status === 401) {
+    const refreshedToken = await getCurrentFirebaseIdToken(true);
+    if (refreshedToken) {
+      response = await fetch(input, {
+        ...init,
+        headers: await buildHeaders(refreshedToken),
+      });
+    }
+  }
 
   if (response.status === 401 && onUnauthorizedCallback) {
     onUnauthorizedCallback();
