@@ -752,6 +752,23 @@ export function sanitizeHelpersList(rawList: unknown): PotentialHelperRecord[] {
       notes: asString(h.notes),
       savedAt: asString(h.savedAt, new Date().toISOString()),
       sourceLeadId: typeof h.sourceLeadId === 'string' ? h.sourceLeadId : undefined,
+      isTeam: h.isTeam === true,
+      serviceCities: Array.isArray(h.serviceCities)
+        ? h.serviceCities
+            .filter((c): c is string => typeof c === 'string')
+            .map((c) => c.trim())
+            .filter(Boolean)
+            .slice(0, 30)
+        : [],
+      availableWeekdays: Array.isArray(h.availableWeekdays)
+        ? Array.from(
+            new Set(
+              h.availableWeekdays.filter(
+                (d): d is number => Number.isInteger(d) && d >= 0 && d <= 6
+              )
+            )
+          ).sort()
+        : [],
     }));
 }
 

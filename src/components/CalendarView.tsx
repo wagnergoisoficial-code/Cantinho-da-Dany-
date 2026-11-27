@@ -22,7 +22,8 @@ import { DEFAULT_GOOGLE_CALENDAR_EMAIL } from '../utils/googleCalendarAuth';
 import { formatDateBr, getLocalDateString } from '../utils/negotiationEngine';
 import { GoogleSignInButton } from './GoogleSignInButton';
 import { ClientRemindersPanel } from './ClientRemindersPanel';
-import { LeadQuoteRecord } from '../types/pricing';
+import { LeadQuoteRecord, PotentialHelperRecord } from '../types/pricing';
+import { TeamSchedulePanel } from './TeamSchedulePanel';
 
 interface CalendarViewProps {
   connected: boolean;
@@ -42,6 +43,8 @@ interface CalendarViewProps {
   history: LeadQuoteRecord[];
   googleReviewLink: string;
   onOpenSettings: () => void;
+  helpers: PotentialHelperRecord[];
+  onOpenHelpers: () => void;
 }
 
 type PendingAction =
@@ -75,6 +78,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   history,
   googleReviewLink,
   onOpenSettings,
+  helpers,
+  onOpenHelpers,
 }) => {
   const [summary, setSummary] = useState('');
   const [date, setDate] = useState(() => getLocalDateString());
@@ -194,6 +199,21 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             label={isLoggingIn ? 'Conectando...' : 'Sign in with Google'}
           />
         </div>
+
+        <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+          <span>
+            A <strong className="text-slate-800">escala da equipe</strong> aparece
+            aqui depois de conectar. Sua equipe ({helpers.filter((h) => h.isTeam).length})
+            e a escala já feita continuam salvas neste aparelho.
+          </span>
+          <button
+            type="button"
+            onClick={onOpenHelpers}
+            className="font-semibold text-[#0B6273] underline py-1"
+          >
+            Ver ajudantes
+          </button>
+        </div>
       </section>
     );
   }
@@ -280,6 +300,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         googleReviewLink={googleReviewLink}
         isLoading={isLoading}
         onOpenSettings={onOpenSettings}
+      />
+
+      <TeamSchedulePanel
+        events={events}
+        history={history}
+        helpers={helpers}
+        isLoading={isLoading}
+        hasCalendarError={Boolean(error)}
+        onOpenHelpers={onOpenHelpers}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">

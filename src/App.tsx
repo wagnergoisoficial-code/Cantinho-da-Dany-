@@ -13,7 +13,7 @@ import { LeadMessageParserBox } from './components/LeadMessageParserBox';
 import { QuickQuoteCard } from './components/QuickQuoteCard';
 import { SmartScheduleSuggestions } from './components/SmartScheduleSuggestions';
 import { MessageAndHistoryLayer } from './components/MessageAndHistoryLayer';
-import { NegotiationView } from './components/NegotiationView';
+import { NegotiationSubTab, NegotiationView } from './components/NegotiationView';
 import { PhotoAnalysisLayer } from './components/PhotoAnalysisLayer';
 import { PricingEngineLayer } from './components/PricingEngineLayer';
 import { SettingsView } from './components/SettingsView';
@@ -111,6 +111,14 @@ export default function App() {
   const [helpers, setHelpers] = useState<PotentialHelperRecord[]>(() =>
     loadPotentialHelpers()
   );
+  // Aba que a Negociação abre: 'ajudantes' quando vem do botão da Agenda.
+  const [negotiationStartTab, setNegotiationStartTab] =
+    useState<NegotiationSubTab>('hoje');
+  useEffect(() => {
+    if (activeTab === 'negociacao' && negotiationStartTab !== 'hoje') {
+      setNegotiationStartTab('hoje');
+    }
+  }, [activeTab, negotiationStartTab]);
   const [lastBackupAt, setLastBackupAt] = useState<string | null>(() =>
     loadLastBackupAt()
   );
@@ -1053,10 +1061,22 @@ export default function App() {
     });
   };
 
-  const handleUpdateHelperNotes = (id: string, notes: string) => {
+  const handleAddHelper = (helper: PotentialHelperRecord) => {
+    setHelpers((prev) => [helper, ...prev]);
+  };
+
+  const handleUpdateHelper = (
+    id: string,
+    patch: Partial<PotentialHelperRecord>
+  ) => {
     setHelpers((prev) =>
-      prev.map((h) => (h.id === id ? { ...h, notes } : h))
+      prev.map((h) => (h.id === id ? { ...h, ...patch, id: h.id } : h))
     );
+  };
+
+  const handleOpenHelpers = () => {
+    setNegotiationStartTab('ajudantes');
+    setActiveTab('negociacao');
   };
 
   const handleDeleteHelper = (id: string) => {
@@ -1481,8 +1501,10 @@ export default function App() {
               onCreateQuickLead={handleCreateQuickLead}
               onDeleteLead={handleDeleteRecord}
               onSavePotentialHelper={handleSavePotentialHelper}
-              onUpdateHelperNotes={handleUpdateHelperNotes}
+              onAddHelper={handleAddHelper}
+              onUpdateHelper={handleUpdateHelper}
               onDeleteHelper={handleDeleteHelper}
+              initialSubTab={negotiationStartTab}
               onGoToCalculator={() => setActiveTab('calculadora')}
               calendarIntegration={calendarIntegration}
             />
@@ -1512,6 +1534,8 @@ export default function App() {
               history={history}
               googleReviewLink={sanitizeReviewLink(config.googleReviewLink)}
               onOpenSettings={() => setActiveTab('configuracoes')}
+              helpers={helpers}
+              onOpenHelpers={handleOpenHelpers}
             />
           </ErrorBoundary>
         )}

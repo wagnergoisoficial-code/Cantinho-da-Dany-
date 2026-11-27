@@ -131,6 +131,12 @@ export interface PotentialHelperRecord {
   notes: string;
   savedAt: string;
   sourceLeadId?: string;
+  /** Faz parte da equipe (pode ser escalado na Agenda). Contatos salvos automaticamente começam como candidatos. */
+  isTeam?: boolean;
+  /** Cidades que atende (nomes livres, ex.: "Norwalk"). */
+  serviceCities?: string[];
+  /** Dias da semana disponíveis: 0 = domingo ... 6 = sábado. */
+  availableWeekdays?: number[];
 }
 
 export interface HouseTier {
