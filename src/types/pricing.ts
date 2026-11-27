@@ -203,6 +203,8 @@ export interface PricingConfig {
   serviceBaseLocation: string;
   serviceMaxRadiusMiles: number;
   servedCities: string[];
+  /** Números de WhatsApp da equipe (digitados em Ajustes, nunca no código). */
+  teamWhatsAppNumbers: string[];
   companyFacts: string;
   extras: ExtrasPricing;
   visitaAvulsa: VisitaAvulsaPricing;
