@@ -61,10 +61,15 @@ import { parseLeadLocally } from './utils/localLeadParser';
 import {
   DEFAULT_GOOGLE_CALENDAR_EMAIL,
   clearGoogleCalendarAccessToken,
+  getFreshGoogleCalendarAccessToken,
+  getGoogleCalendarAccessToken,
   googleCalendarLogout,
   googleCalendarSignIn,
+  hasGoogleCalendarAccount,
   initGoogleCalendarAuth,
+  renewGoogleCalendarAccessToken,
 } from './utils/googleCalendarAuth';
+import { GoogleCalendarUserError } from './utils/googleCalendarErrors';
 import {
   CalendarWorkspaceBridge,
   CreateCalendarEventInput,
@@ -152,7 +157,7 @@ export default function App() {
     null
   );
 
-  // Estado em memória da integração com Google Calendar (token nunca vai para localStorage)
+  // Estado da integração com Google Calendar (o token fica salvo até vencer, ver googleCalendarAuth.ts)
   const [calendarToken, setCalendarToken] = useState<string | null>(null);
   const [calendarUserEmail, setCalendarUserEmail] = useState<string | null>(
     null
@@ -257,100 +262,154 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [activeTab, settingsDirty]);
 
-  const loadCalendarData = useCallback(
-    async (token: string, preferredCalendarId?: string) => {
-      setCalendarLoading(true);
-      setCalendarError(null);
-      try {
-        const list = await listGoogleCalendars(token);
-        setCalendars(list);
+  const resetCalendarState = useCallback(() => {
+    setCalendarToken(null);
+    setCalendars([]);
+    setCalendarEvents([]);
+  }, []);
 
-        const preferredEmailMatch = list.find(
-          (item) =>
-            item.id.toLowerCase() ===
-            DEFAULT_GOOGLE_CALENDAR_EMAIL.toLowerCase()
+  const describeCalendarError = useCallback(
+    (err: unknown, fallback: string): string | null => {
+      if (err instanceof GoogleCalendarUserError && err.silent) return null;
+      return err instanceof Error && err.message ? err.message : fallback;
+    },
+    []
+  );
+
+  /**
+   * Executa uma ação na agenda com um token válido. Se o token estiver perto
+   * de vencer (ou o Google responder 401), renova automaticamente uma vez e
+   * repete a ação. Chamado a partir de cliques, então a janela rápida do
+   * Google não é bloqueada pelo navegador.
+   */
+  const withCalendarToken = useCallback(
+    async <T,>(action: (token: string) => Promise<T>): Promise<T> => {
+      let token = await getFreshGoogleCalendarAccessToken(true);
+      if (!token) {
+        throw new GoogleCalendarUserError(
+          'Conecte o Google Agenda antes de continuar.',
+          'calendar/not-connected'
         );
-
-        const targetId =
-          preferredCalendarId &&
-          list.some((item) => item.id === preferredCalendarId)
-            ? preferredCalendarId
-            : preferredEmailMatch?.id ||
-              list.find((item) => item.primary)?.id ||
-              'primary';
-
-        setSelectedCalendarId(targetId);
-        const upcoming = await listUpcomingCalendarEvents(token, targetId, 45);
-        setCalendarEvents(upcoming);
+      }
+      setCalendarToken(token);
+      try {
+        return await action(token);
       } catch (err) {
-        if (err instanceof GoogleCalendarAuthExpiredError) {
-          clearGoogleCalendarAccessToken();
-          setCalendarToken(null);
-          setCalendarEvents([]);
-          setCalendarError(err.message);
-        } else {
-          setCalendarError(
-            err instanceof Error
-              ? err.message
-              : 'Erro ao carregar eventos do Google Calendar.'
-          );
-        }
-      } finally {
-        setCalendarLoading(false);
+        if (!(err instanceof GoogleCalendarAuthExpiredError)) throw err;
+        clearGoogleCalendarAccessToken();
+        token = await renewGoogleCalendarAccessToken();
+        setCalendarToken(token);
+        return await action(token);
       }
     },
     []
   );
 
+  const fetchCalendarData = useCallback(
+    async (token: string, preferredCalendarId?: string) => {
+      const list = await listGoogleCalendars(token);
+      setCalendars(list);
+
+      const preferredEmailMatch = list.find(
+        (item) =>
+          item.id.toLowerCase() === DEFAULT_GOOGLE_CALENDAR_EMAIL.toLowerCase()
+      );
+
+      const targetId =
+        preferredCalendarId &&
+        list.some((item) => item.id === preferredCalendarId)
+          ? preferredCalendarId
+          : preferredEmailMatch?.id ||
+            list.find((item) => item.primary)?.id ||
+            'primary';
+
+      setSelectedCalendarId(targetId);
+      const upcoming = await listUpcomingCalendarEvents(token, targetId, 45);
+      setCalendarEvents(upcoming);
+    },
+    []
+  );
+
+  /** Carregamento automático (sem clique): nunca abre janela do Google. */
+  const loadCalendarData = useCallback(
+    async (token: string, preferredCalendarId?: string) => {
+      setCalendarLoading(true);
+      setCalendarError(null);
+      try {
+        await fetchCalendarData(token, preferredCalendarId);
+      } catch (err) {
+        if (err instanceof GoogleCalendarAuthExpiredError) {
+          clearGoogleCalendarAccessToken();
+          resetCalendarState();
+        }
+        setCalendarError(
+          describeCalendarError(err, 'Erro ao carregar eventos do Google Agenda.')
+        );
+      } finally {
+        setCalendarLoading(false);
+      }
+    },
+    [fetchCalendarData, resetCalendarState, describeCalendarError]
+  );
+
   useEffect(() => {
     const unsubscribe = initGoogleCalendarAuth(
       (user, token) => {
+        // Recarregou a página com a conexão ainda válida: reconecta sozinho.
         setCalendarUserEmail(user.email || user.displayName || null);
         setCalendarToken(token);
+        void loadCalendarData(token);
       },
       () => {
-        setCalendarToken(null);
         setCalendarUserEmail(null);
-        setCalendars([]);
-        setCalendarEvents([]);
+        resetCalendarState();
+      },
+      (user) => {
+        // Conta lembrada, mas o token venceu: um toque em Conectar renova.
+        setCalendarUserEmail(user.email || user.displayName || null);
+        resetCalendarState();
       }
     );
     return () => unsubscribe();
-  }, []);
+  }, [loadCalendarData, resetCalendarState]);
 
   const handleCalendarSignIn = useCallback(async () => {
     setCalendarLoggingIn(true);
     setCalendarError(null);
     try {
       const result = await googleCalendarSignIn();
-      if (result) {
-        setCalendarUserEmail(
-          result.user.email || result.user.displayName || null
-        );
-        setCalendarToken(result.accessToken);
-        await loadCalendarData(result.accessToken);
-      }
+      setCalendarUserEmail(
+        result.user.email || result.user.displayName || null
+      );
+      setCalendarToken(result.accessToken);
+      await loadCalendarData(result.accessToken, selectedCalendarId);
     } catch (err) {
-      const message = err instanceof Error ? err.message : '';
-      if (!/popup-closed-by-user|cancelled-popup-request/i.test(message)) {
-        setCalendarError(
-          message || 'Não foi possível conectar ao Google Calendar.'
-        );
-      }
+      setCalendarError(
+        describeCalendarError(err, 'Não foi possível conectar ao Google Agenda.')
+      );
     } finally {
       setCalendarLoggingIn(false);
     }
-  }, [loadCalendarData]);
+  }, [loadCalendarData, describeCalendarError, selectedCalendarId]);
 
   const handleCalendarLogout = useCallback(async () => {
     await googleCalendarLogout();
-    setCalendarToken(null);
+    resetCalendarState();
     setCalendarUserEmail(null);
-    setCalendars([]);
-    setCalendarEvents([]);
     setSelectedCalendarId('primary');
     setCalendarError(null);
-  }, []);
+  }, [resetCalendarState]);
+
+  const handleCalendarActionError = useCallback(
+    (err: unknown, fallback: string) => {
+      if (err instanceof GoogleCalendarUserError && err.silent) return;
+      if (!hasGoogleCalendarAccount() || !getGoogleCalendarAccessToken()) {
+        resetCalendarState();
+      }
+      setCalendarError(describeCalendarError(err, fallback));
+    },
+    [resetCalendarState, describeCalendarError]
+  );
 
   const handleSelectCalendar = useCallback(
     async (nextCalendarId: string) => {
@@ -359,93 +418,75 @@ export default function App() {
       setCalendarLoading(true);
       setCalendarError(null);
       try {
-        const upcoming = await listUpcomingCalendarEvents(
-          calendarToken,
-          nextCalendarId,
-          45
+        const upcoming = await withCalendarToken((token) =>
+          listUpcomingCalendarEvents(token, nextCalendarId, 45)
         );
         setCalendarEvents(upcoming);
       } catch (err) {
-        if (err instanceof GoogleCalendarAuthExpiredError) {
-          clearGoogleCalendarAccessToken();
-          setCalendarToken(null);
-          setCalendarEvents([]);
-        }
-        setCalendarError(
-          err instanceof Error
-            ? err.message
-            : 'Erro ao carregar a agenda selecionada.'
-        );
+        handleCalendarActionError(err, 'Erro ao carregar a agenda selecionada.');
       } finally {
         setCalendarLoading(false);
       }
     },
-    [calendarToken]
+    [calendarToken, withCalendarToken, handleCalendarActionError]
   );
 
-  const handleRefreshCalendar = useCallback(() => {
-    if (!calendarToken) return;
-    void loadCalendarData(calendarToken, selectedCalendarId);
-  }, [calendarToken, selectedCalendarId, loadCalendarData]);
+  const handleRefreshCalendar = useCallback(async () => {
+    if (!hasGoogleCalendarAccount()) return;
+    setCalendarLoading(true);
+    setCalendarError(null);
+    try {
+      await withCalendarToken((token) =>
+        fetchCalendarData(token, selectedCalendarId)
+      );
+    } catch (err) {
+      handleCalendarActionError(err, 'Erro ao atualizar a agenda.');
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [
+    selectedCalendarId,
+    withCalendarToken,
+    fetchCalendarData,
+    handleCalendarActionError,
+  ]);
 
   const handleCreateCalendarEvent = useCallback(
     async (eventInput: CreateCalendarEventInput) => {
-      if (!calendarToken) {
-        throw new Error('Conecte o Google Calendar antes de agendar.');
+      if (!hasGoogleCalendarAccount()) {
+        throw new Error('Conecte o Google Agenda antes de agendar.');
       }
       try {
-        await createGoogleCalendarEvent(
-          calendarToken,
-          selectedCalendarId,
-          eventInput
-        );
-        const upcoming = await listUpcomingCalendarEvents(
-          calendarToken,
-          selectedCalendarId,
-          45
-        );
+        const upcoming = await withCalendarToken(async (token) => {
+          await createGoogleCalendarEvent(token, selectedCalendarId, eventInput);
+          return listUpcomingCalendarEvents(token, selectedCalendarId, 45);
+        });
         setCalendarEvents(upcoming);
       } catch (err) {
-        if (err instanceof GoogleCalendarAuthExpiredError) {
-          clearGoogleCalendarAccessToken();
-          setCalendarToken(null);
-          setCalendarEvents([]);
-          setCalendarError(err.message);
-        }
+        handleCalendarActionError(err, 'Não foi possível criar o evento.');
         throw err;
       }
     },
-    [calendarToken, selectedCalendarId]
+    [selectedCalendarId, withCalendarToken, handleCalendarActionError]
   );
 
   const handleDeleteCalendarEvent = useCallback(
     async (eventId: string) => {
-      if (!calendarToken) {
-        throw new Error('Conecte o Google Calendar antes de excluir.');
+      if (!hasGoogleCalendarAccount()) {
+        throw new Error('Conecte o Google Agenda antes de excluir.');
       }
       try {
-        await deleteGoogleCalendarEvent(
-          calendarToken,
-          selectedCalendarId,
-          eventId
-        );
-        const upcoming = await listUpcomingCalendarEvents(
-          calendarToken,
-          selectedCalendarId,
-          45
-        );
+        const upcoming = await withCalendarToken(async (token) => {
+          await deleteGoogleCalendarEvent(token, selectedCalendarId, eventId);
+          return listUpcomingCalendarEvents(token, selectedCalendarId, 45);
+        });
         setCalendarEvents(upcoming);
       } catch (err) {
-        if (err instanceof GoogleCalendarAuthExpiredError) {
-          clearGoogleCalendarAccessToken();
-          setCalendarToken(null);
-          setCalendarEvents([]);
-          setCalendarError(err.message);
-        }
+        handleCalendarActionError(err, 'Não foi possível excluir o evento.');
         throw err;
       }
     },
-    [calendarToken, selectedCalendarId]
+    [selectedCalendarId, withCalendarToken, handleCalendarActionError]
   );
 
   const calendarIntegration = useMemo<CalendarWorkspaceBridge>(
