@@ -11,6 +11,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { LeadInputLayer } from './components/LeadInputLayer';
 import { LeadMessageParserBox } from './components/LeadMessageParserBox';
 import { QuickQuoteCard } from './components/QuickQuoteCard';
+import { SmartScheduleSuggestions } from './components/SmartScheduleSuggestions';
 import { MessageAndHistoryLayer } from './components/MessageAndHistoryLayer';
 import { NegotiationView } from './components/NegotiationView';
 import { PhotoAnalysisLayer } from './components/PhotoAnalysisLayer';
@@ -1329,6 +1330,16 @@ export default function App() {
                 justSaved={justSaved}
                 saveError={saveError}
                 teamWhatsAppNumbers={config.teamWhatsAppNumbers}
+              />
+
+              <SmartScheduleSuggestions
+                leadCity={input.city}
+                leadZip={input.zipCode}
+                leadStreetAddress={input.streetAddress}
+                cityFixedDays={config.cityFixedDays}
+                defaultDay1={input.dayOption1 || config.defaultDayOption1}
+                defaultDay2={input.dayOption2 || config.defaultDayOption2}
+                calendarIntegration={calendarIntegration}
               />
 
               <button

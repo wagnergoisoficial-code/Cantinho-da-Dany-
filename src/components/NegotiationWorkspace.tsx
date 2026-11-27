@@ -42,15 +42,13 @@ import {
 } from '../types/pricing';
 import { apiFetch } from '../utils/apiClient';
 import { resolveDateOptionsForCity } from '../utils/dateOptions';
-import {
-  CalendarWorkspaceBridge,
-  countEventsByDateKey,
-} from '../utils/googleCalendarApi';
+import { CalendarWorkspaceBridge } from '../utils/googleCalendarApi';
 import { isCityInServedList } from '../utils/messageBuilder';
 import { ConversationThreadPanel } from './ConversationThreadPanel';
 import { GoogleSignInButton } from './GoogleSignInButton';
 import { LeadCalendarModal } from './LeadCalendarModal';
 import { LeadMapsPanel } from './LeadMapsPanel';
+import { SmartScheduleSuggestions } from './SmartScheduleSuggestions';
 import {
   addDaysToDateString,
   checkNameMismatch,
@@ -163,11 +161,6 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
       config.defaultDayOption1,
       config.defaultDayOption2,
     ]
-  );
-
-  const calendarEventsByDate = useMemo(
-    () => countEventsByDateKey(calendarIntegration.events),
-    [calendarIntegration.events]
   );
 
   const selectedCalendarName = useMemo(() => {
@@ -826,40 +819,17 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {resolvedSuggestedDates.dates.map((dateOpt) => {
-                const count = (calendarEventsByDate[dateOpt.dateKey] || [])
-                  .length;
-                return (
-                  <button
-                    key={dateOpt.dateKey}
-                    type="button"
-                    onClick={() => setCalendarModalDateKey(dateOpt.dateKey)}
-                    className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50/70 hover:border-[#0B6273] hover:bg-[#EAF4F6]/50 transition-colors text-left"
-                  >
-                    <div>
-                      <div className="text-xs font-semibold text-slate-900 capitalize">
-                        {dateOpt.pt}
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        {dateOpt.en}
-                      </div>
-                    </div>
-                    <span
-                      className={`text-xs font-semibold px-2 py-0.5 rounded border ${
-                        count === 0
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          : 'bg-amber-50 text-amber-800 border-amber-200'
-                      }`}
-                    >
-                      {count === 0
-                        ? 'Livre'
-                        : `${count} ${count === 1 ? 'evento' : 'eventos'}`}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <SmartScheduleSuggestions
+              leadCity={lead.city}
+              leadZip={lead.zipCode}
+              leadStreetAddress={lead.streetAddress}
+              cityFixedDays={config.cityFixedDays}
+              defaultDay1={lead.dayOption1 || config.defaultDayOption1}
+              defaultDay2={lead.dayOption2 || config.defaultDayOption2}
+              calendarIntegration={calendarIntegration}
+              onPickDate={(dateKey) => setCalendarModalDateKey(dateKey)}
+              hideConnectPrompt
+            />
 
             {calendarScheduledMsg && (
               <div className="flex items-center gap-2 text-xs font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
