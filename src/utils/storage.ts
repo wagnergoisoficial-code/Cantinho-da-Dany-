@@ -248,6 +248,16 @@ export function upgradePricingConfig(candidate: unknown): PricingConfig | null {
           )
         )
       : [...DEFAULT_PRICING_CONFIG.servedCities],
+    teamWhatsAppNumbers: Array.isArray(candidate.teamWhatsAppNumbers)
+      ? Array.from(
+          new Set(
+            candidate.teamWhatsAppNumbers
+              .filter((n): n is string => typeof n === 'string')
+              .map((n) => n.trim())
+              .filter((n) => n.replace(/\D/g, '').length >= 10)
+          )
+        )
+      : [],
   };
 }
 

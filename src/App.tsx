@@ -1328,6 +1328,7 @@ export default function App() {
                 onSaveToHistory={handleSaveToHistory}
                 justSaved={justSaved}
                 saveError={saveError}
+                teamWhatsAppNumbers={config.teamWhatsAppNumbers}
               />
 
               <button

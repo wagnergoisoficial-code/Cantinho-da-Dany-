@@ -155,6 +155,7 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   serviceBaseLocation: 'Stamford, CT 06901',
   serviceMaxRadiusMiles: 35,
   servedCities: ['Stamford', 'Norwalk'],
+  teamWhatsAppNumbers: [],
   companyFacts: DEFAULT_COMPANY_FACTS,
   extras: {
     forno: 35,

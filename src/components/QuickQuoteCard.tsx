@@ -6,6 +6,7 @@ import {
   Copy,
   MessageCircle,
   Smartphone,
+  Users,
   Zap,
 } from 'lucide-react';
 import {
@@ -35,6 +36,7 @@ interface QuickQuoteCardProps {
   onSaveToHistory: () => void;
   justSaved: boolean;
   saveError?: string | null;
+  teamWhatsAppNumbers: string[];
 }
 
 const inputClass =
@@ -52,8 +54,10 @@ export const QuickQuoteCard: React.FC<QuickQuoteCardProps> = ({
   onSaveToHistory,
   justSaved,
   saveError,
+  teamWhatsAppNumbers,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [teamIndex, setTeamIndex] = useState(0);
 
   const {
     english,
@@ -83,6 +87,12 @@ export const QuickQuoteCard: React.FC<QuickQuoteCardProps> = ({
   const hasPhone = input.phone.replace(/\D/g, '').length > 0;
   const whatsappHref = buildWhatsAppLink(input.phone, english);
   const smsHref = buildSmsLink(input.phone, english);
+  const selectedTeamNumber =
+    teamWhatsAppNumbers[Math.min(teamIndex, teamWhatsAppNumbers.length - 1)] ??
+    '';
+  const teamHref = selectedTeamNumber
+    ? buildWhatsAppLink(selectedTeamNumber, english)
+    : '';
 
   const handleCopy = async () => {
     if (copyBlocked) return;
@@ -269,6 +279,40 @@ export const QuickQuoteCard: React.FC<QuickQuoteCardProps> = ({
           )}
         </button>
       </div>
+
+      {/* Enviar para o WhatsApp da equipe (números vêm de Ajustes) */}
+      {teamWhatsAppNumbers.length > 0 && (
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          {teamWhatsAppNumbers.length > 1 && (
+            <select
+              aria-label="Número da equipe"
+              value={Math.min(teamIndex, teamWhatsAppNumbers.length - 1)}
+              onChange={(e) => setTeamIndex(Number(e.target.value))}
+              className="h-12 px-3 rounded-lg border border-slate-300 bg-white text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0B6273]/25 focus:border-[#0B6273] sm:w-56"
+            >
+              {teamWhatsAppNumbers.map((num, idx) => (
+                <option key={num} value={idx}>
+                  {num}
+                </option>
+              ))}
+            </select>
+          )}
+          <a
+            href={teamHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full sm:flex-1 inline-flex items-center justify-center gap-2 h-12 shrink-0 px-4 rounded-lg border-2 border-[#25D366] text-[#128C4A] bg-white text-sm font-semibold hover:bg-[#25D366]/10 transition-colors"
+          >
+            <Users className="w-5 h-5" />
+            <span>
+              Enviar para a equipe
+              {teamWhatsAppNumbers.length === 1
+                ? ` (${selectedTeamNumber})`
+                : ''}
+            </span>
+          </a>
+        </div>
+      )}
 
       {saveError && (
         <div className="p-3 rounded-lg bg-red-50 border border-red-300 flex items-center gap-2 text-xs font-semibold text-red-700">
