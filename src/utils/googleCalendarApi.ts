@@ -1,3 +1,8 @@
+import {
+  friendlyCalendarApiError,
+  friendlyNetworkError,
+} from './googleCalendarErrors';
+
 export interface GoogleCalendarListItem {
   id: string;
   summary: string;
@@ -51,7 +56,7 @@ export interface CalendarWorkspaceBridge {
 
 export class GoogleCalendarAuthExpiredError extends Error {
   constructor() {
-    super('Sessão do Google Calendar expirada. Conecte novamente para continuar.');
+    super('Sua conexão com a agenda expirou. Toque em Conectar para renovar (não pede permissões de novo).');
     this.name = 'GoogleCalendarAuthExpiredError';
   }
 }
@@ -63,14 +68,19 @@ async function calendarFetch<T>(
   accessToken: string,
   init: RequestInit = {}
 ): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      ...(init.headers || {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        ...(init.headers || {}),
+      },
+    });
+  } catch {
+    throw friendlyNetworkError();
+  }
 
   if (response.status === 401) {
     throw new GoogleCalendarAuthExpiredError();
@@ -80,15 +90,13 @@ async function calendarFetch<T>(
     return undefined as T;
   }
 
-  const data = (await response.json().catch(() => ({}))) as {
-    error?: { message?: string };
-  };
+  const data = (await response.json().catch(() => ({}))) as Parameters<
+    typeof friendlyCalendarApiError
+  >[1];
 
   if (!response.ok) {
-    throw new Error(
-      data?.error?.message ||
-        `Erro ao comunicar com o Google Calendar (HTTP ${response.status}).`
-    );
+    console.error('Google Calendar API error:', response.status, data);
+    throw friendlyCalendarApiError(response.status, data);
   }
 
   return data as T;
