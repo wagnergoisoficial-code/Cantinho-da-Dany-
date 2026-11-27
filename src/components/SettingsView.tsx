@@ -339,6 +339,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         ) : null}
       </section>
 
+      {/* Endereço de partida (fica só neste aparelho, nunca no código) */}
+      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-3">
+        <div className="border-b border-slate-100 pb-3">
+          <h2 className="text-lg font-semibold text-slate-900">
+            Endereço de partida (casa)
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Usado na Agenda inteligente para mostrar quantas milhas e minutos de
+            carro você leva da sua casa até o novo cliente. Fica salvo só neste
+            aparelho. Depois clique em Salvar.
+          </p>
+        </div>
+        <input
+          id="homeStartAddressInput"
+          type="text"
+          autoComplete="street-address"
+          value={draft.homeStartAddress}
+          onChange={(e) =>
+            setDraft((prev) => ({ ...prev, homeStartAddress: e.target.value }))
+          }
+          placeholder="Rua, número, cidade, CT e ZIP code"
+          className="w-full h-11 sm:h-10 px-3 rounded-md border border-slate-300 text-base text-slate-900 bg-white"
+        />
+        {!draft.homeStartAddress.trim() && (
+          <p className="text-xs text-slate-400">
+            Sem endereço, a agenda mostra só a distância até os serviços do dia.
+          </p>
+        )}
+      </section>
+
       {/* Fatos da empresa (fonte única da IA) */}
       <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">

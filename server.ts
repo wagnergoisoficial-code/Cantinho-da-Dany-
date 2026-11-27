@@ -1453,6 +1453,161 @@ async function computeDriveRouteV2(
   };
 }
 
+// ------------------------------------------
+// Tempo e distância de carro (Agenda inteligente)
+// ------------------------------------------
+// Usa a Routes API (computeRouteMatrix) no modo mais barato
+// (TRAFFIC_UNAWARE = SKU "Essentials", 10.000 elementos grátis por mês).
+// Endereços vão como texto, sem chamada extra de Geocoding.
+// Resultados ficam em cache por par de endereços para não pagar duas vezes.
+const DRIVE_MATRIX_MAX_ORIGINS = 8;
+const DRIVE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const DRIVE_CACHE_MAX_ENTRIES = 2000;
+
+interface DriveLegResult {
+  origin: string;
+  destination: string;
+  ok: boolean;
+  miles: number | null;
+  minutes: number | null;
+}
+
+const driveCache = new Map<
+  string,
+  { at: number; miles: number | null; minutes: number | null; ok: boolean }
+>();
+
+function normalizeDriveAddress(raw: unknown): string {
+  return typeof raw === 'string'
+    ? raw.replace(/\s+/g, ' ').trim().slice(0, 200)
+    : '';
+}
+
+function driveCacheKey(origin: string, destination: string): string {
+  return `${origin.toLowerCase()}|${destination.toLowerCase()}`;
+}
+
+function rememberDrive(
+  key: string,
+  value: { miles: number | null; minutes: number | null; ok: boolean }
+): void {
+  if (driveCache.size >= DRIVE_CACHE_MAX_ENTRIES) {
+    const oldest = driveCache.keys().next().value;
+    if (oldest !== undefined) driveCache.delete(oldest);
+  }
+  driveCache.set(key, { at: Date.now(), ...value });
+}
+
+app.post('/api/maps/drive-times', requireApiAuth, async (req, res) => {
+  const body = (req.body || {}) as { origins?: unknown; destination?: unknown };
+  const destination = normalizeDriveAddress(body.destination);
+  const origins = Array.isArray(body.origins)
+    ? Array.from(
+        new Set(body.origins.map(normalizeDriveAddress).filter(Boolean))
+      ).slice(0, DRIVE_MATRIX_MAX_ORIGINS)
+    : [];
+
+  if (!destination || origins.length === 0) {
+    return res
+      .status(400)
+      .json({ error: 'Informe o endereço do cliente e pelo menos uma origem.' });
+  }
+
+  const mapsApiKey = getServerMapsApiKey();
+  if (!mapsApiKey) {
+    return res.json({
+      mapsAvailable: false,
+      reason: 'sem-chave',
+      results: [] as DriveLegResult[],
+    });
+  }
+
+  const results: DriveLegResult[] = [];
+  const missing: string[] = [];
+  const now = Date.now();
+  for (const origin of origins) {
+    const cached = driveCache.get(driveCacheKey(origin, destination));
+    if (cached && now - cached.at < DRIVE_CACHE_TTL_MS) {
+      results.push({ origin, destination, ...cached });
+    } else {
+      missing.push(origin);
+    }
+  }
+
+  if (missing.length > 0) {
+    try {
+      const resp = await fetch(
+        'https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': mapsApiKey,
+            'X-Goog-FieldMask':
+              'originIndex,destinationIndex,distanceMeters,duration,condition,status',
+            'X-Goog-Maps-Solution-ID': GMP_ATTRIBUTION_ID,
+          },
+          body: JSON.stringify({
+            origins: missing.map((address) => ({ waypoint: { address } })),
+            destinations: [{ waypoint: { address: destination } }],
+            travelMode: 'DRIVE',
+            routingPreference: 'TRAFFIC_UNAWARE',
+            regionCode: 'us',
+            units: 'IMPERIAL',
+          }),
+        }
+      );
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        throw new Error(
+          `Routes API HTTP ${resp.status}: ${errText.slice(0, 180) || resp.statusText}`
+        );
+      }
+      const elements = (await resp.json()) as Array<{
+        originIndex?: number;
+        distanceMeters?: number;
+        duration?: string;
+        condition?: string;
+      }>;
+      const byIndex = new Map<number, (typeof elements)[number]>();
+      for (const el of Array.isArray(elements) ? elements : []) {
+        byIndex.set(el.originIndex ?? 0, el);
+      }
+      missing.forEach((origin, idx) => {
+        const el = byIndex.get(idx);
+        const ok =
+          !!el &&
+          el.condition === 'ROUTE_EXISTS' &&
+          typeof el.distanceMeters === 'number';
+        const value = ok
+          ? {
+              ok: true,
+              miles: Math.round((el!.distanceMeters! / 1609.344) * 10) / 10,
+              minutes: Math.max(
+                1,
+                Math.round(
+                  (Number(String(el!.duration || '0s').replace(/s$/i, '')) ||
+                    0) / 60
+                )
+              ),
+            }
+          : { ok: false, miles: null, minutes: null };
+        rememberDrive(driveCacheKey(origin, destination), value);
+        results.push({ origin, destination, ...value });
+      });
+    } catch (err) {
+      console.error('Erro ao calcular tempo de carro (Routes API):', err);
+      return res.json({
+        mapsAvailable: false,
+        reason: 'erro-maps',
+        results: results,
+      });
+    }
+  }
+
+  return res.json({ mapsAvailable: true, results });
+});
+
 app.get('/api/maps/config', requireApiAuth, (_req, res) => {
   res.json({
     mapsApiKey: (

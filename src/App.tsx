@@ -1361,6 +1361,7 @@ export default function App() {
                 defaultDay1={input.dayOption1 || config.defaultDayOption1}
                 defaultDay2={input.dayOption2 || config.defaultDayOption2}
                 calendarIntegration={calendarIntegration}
+                homeStartAddress={config.homeStartAddress}
               />
 
               <button
