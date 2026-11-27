@@ -33,6 +33,7 @@ import {
 } from '../utils/negotiationEngine';
 import { CalendarWorkspaceBridge } from '../utils/googleCalendarApi';
 import { NegotiationWorkspace } from './NegotiationWorkspace';
+import { HelpersManager } from './HelpersManager';
 
 export type NegotiationSubTab = 'hoje' | 'todos' | 'painel' | 'ajudantes';
 
@@ -47,8 +48,11 @@ interface NegotiationViewProps {
   onCreateQuickLead: (lead: LeadQuoteRecord) => void;
   onDeleteLead: (id: string) => void;
   onSavePotentialHelper: (lead: LeadQuoteRecord) => void;
-  onUpdateHelperNotes: (id: string, notes: string) => void;
+  onAddHelper: (helper: PotentialHelperRecord) => void;
+  onUpdateHelper: (id: string, patch: Partial<PotentialHelperRecord>) => void;
   onDeleteHelper: (id: string) => void;
+  /** Aba que abre primeiro (ex.: 'ajudantes' quando vem da Agenda). */
+  initialSubTab?: NegotiationSubTab;
   onGoToCalculator: () => void;
   calendarIntegration: CalendarWorkspaceBridge;
 }
@@ -76,12 +80,14 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
   onCreateQuickLead,
   onDeleteLead,
   onSavePotentialHelper,
-  onUpdateHelperNotes,
+  onAddHelper,
+  onUpdateHelper,
   onDeleteHelper,
+  initialSubTab = 'hoje',
   onGoToCalculator,
   calendarIntegration,
 }) => {
-  const [subTab, setSubTab] = useState<NegotiationSubTab>('hoje');
+  const [subTab, setSubTab] = useState<NegotiationSubTab>(initialSubTab);
   const [stageFilter, setStageFilter] = useState<'Todos' | NegotiationStage>(
     'Todos'
   );
@@ -501,7 +507,7 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
             }`}
           >
             <UserPlus className="w-4 h-4 shrink-0" />
-            <span>Possíveis ajudantes ({helpers.length})</span>
+            <span>Ajudantes ({helpers.length})</span>
           </button>
         </div>
       </section>
@@ -742,69 +748,14 @@ export const NegotiationView: React.FC<NegotiationViewProps> = ({
         </div>
       )}
 
-      {/* ABA POSSÍVEIS AJUDANTES */}
+      {/* ABA AJUDANTES (equipe + candidatos) */}
       {subTab === 'ajudantes' && (
-        <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
-          <div className="border-b border-slate-100 pb-3">
-            <h3 className="text-base font-semibold text-slate-900">
-              Possíveis ajudantes
-            </h3>
-            <p className="text-xs text-slate-500">
-              Contatos salvos automaticamente quando alguém seleciona
-              &quot;Estou procurando emprego&quot;.
-            </p>
-          </div>
-
-          {helpers.length === 0 ? (
-            <p className="text-sm text-slate-500 py-4 text-center">
-              Nenhum contato salvo em Possíveis ajudantes ainda.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {helpers.map((helper) => (
-                <div
-                  key={helper.id}
-                  className="p-3.5 rounded-lg border border-slate-200 space-y-2"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="font-semibold text-slate-900">
-                        {helper.name || 'Sem nome'}
-                      </span>
-                      {helper.phone && (
-                        <span className="ml-2 text-xs font-mono text-slate-600">
-                          {helper.phone}
-                        </span>
-                      )}
-                      {helper.city && (
-                        <span className="ml-2 text-xs text-slate-500">
-                          · {helper.city}
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteHelper(helper.id)}
-                      className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
-                      aria-label="Remover possível ajudante"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={helper.notes}
-                    onChange={(e) =>
-                      onUpdateHelperNotes(helper.id, e.target.value)
-                    }
-                    placeholder="Anotações sobre experiência, região, disponibilidade..."
-                    className="w-full h-10 px-3 rounded-md border border-slate-300 text-base text-slate-900"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+        <HelpersManager
+          helpers={helpers}
+          onAddHelper={onAddHelper}
+          onUpdateHelper={onUpdateHelper}
+          onDeleteHelper={onDeleteHelper}
+        />
       )}
     </div>
   );

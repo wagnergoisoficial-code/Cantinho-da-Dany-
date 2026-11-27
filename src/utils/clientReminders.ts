@@ -174,6 +174,73 @@ export interface ReminderServicesResult {
   skipped: ReminderService[];
 }
 
+/** Dados do serviço lidos de um evento com horário (sem o "hoje/amanhã"). */
+export type CalendarServiceInfo = Omit<ReminderService, 'day'> & {
+  /** Parece limpeza com cliente (e não folga ou compromisso pessoal). */
+  isCleaning: boolean;
+  /** Cidade do lead casado no histórico, quando houver. */
+  leadCity: string;
+};
+
+/**
+ * Lê nome, telefone, endereço, data e horário de um evento da agenda,
+ * completando pelo histórico de leads. Retorna null para eventos de dia inteiro.
+ */
+export function describeCalendarService(
+  event: GoogleCalendarEvent,
+  history: LeadQuoteRecord[]
+): CalendarServiceInfo | null {
+  if (!event.start?.dateTime) return null;
+  const dateKey = eventDateKey(event);
+  if (!dateKey) return null;
+
+  const description = event.description || '';
+  const nameFromDescription = readDescriptionField(description, ['cliente', 'client', 'nome', 'name']);
+  const phoneFromDescription =
+    readDescriptionField(description, ['telefone', 'phone', 'celular', 'tel']) ||
+    findPhoneInText(description) ||
+    findPhoneInText(event.location || '');
+  const summaryName = nameFromSummary(event.summary || '');
+  const rawName =
+    nameFromDescription && normalizeName(nameFromDescription) !== 'nao informado'
+      ? nameFromDescription
+      : summaryName;
+
+  const lead = matchLead(history, phoneFromDescription, rawName);
+  const clientName = (lead?.clientName || rawName || '').trim();
+  const phone = (phoneFromDescription || lead?.phone || '').trim();
+  const leadAddress = lead
+    ? [lead.streetAddress, lead.city, lead.zipCode]
+        .filter((v) => Boolean(v && String(v).trim()))
+        .join(', ')
+    : '';
+  const address = (event.location || '').trim() || leadAddress;
+
+  const startsAt = new Date(event.start.dateTime);
+  const endsAt = event.end?.dateTime ? new Date(event.end.dateTime) : null;
+  const validStart = Number.isNaN(startsAt.getTime()) ? null : startsAt;
+  const validEnd = endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null;
+
+  return {
+    event,
+    dateKey,
+    clientName,
+    firstName: clientName.split(/\s+/)[0] || '',
+    phone,
+    address,
+    dateLabelEn: formatDateLabelEn(dateKey),
+    timeLabelEn: validStart ? formatTime(validStart, 'en-US') : '',
+    timeLabelPt: validStart ? formatTime(validStart, 'pt-BR') : '',
+    startsAt: validStart,
+    endsAt: validEnd,
+    matchedLeadId: lead?.id ?? null,
+    isCleaning: looksLikeCleaningService(event, lead),
+    leadCity: (lead?.city || '').trim(),
+  };
+}
+
+export { addDaysToKey as addDaysToDateKey };
+
 export function buildReminderServices(
   events: GoogleCalendarEvent[],
   history: LeadQuoteRecord[],
@@ -187,52 +254,14 @@ export function buildReminderServices(
   for (const event of events) {
     const dateKey = eventDateKey(event);
     if (dateKey !== todayKey && dateKey !== tomorrowKey) continue;
-    if (!event.start?.dateTime) continue;
-
-    const description = event.description || '';
-    const nameFromDescription = readDescriptionField(description, ['cliente', 'client', 'nome', 'name']);
-    const phoneFromDescription =
-      readDescriptionField(description, ['telefone', 'phone', 'celular', 'tel']) ||
-      findPhoneInText(description) ||
-      findPhoneInText(event.location || '');
-    const summaryName = nameFromSummary(event.summary || '');
-    const rawName =
-      nameFromDescription && normalizeName(nameFromDescription) !== 'nao informado'
-        ? nameFromDescription
-        : summaryName;
-
-    const lead = matchLead(history, phoneFromDescription, rawName);
-    const clientName = (lead?.clientName || rawName || '').trim();
-    const phone = (phoneFromDescription || lead?.phone || '').trim();
-    const leadAddress = lead
-      ? [lead.streetAddress, lead.city, lead.zipCode]
-          .filter((v) => Boolean(v && String(v).trim()))
-          .join(', ')
-      : '';
-    const address = (event.location || '').trim() || leadAddress;
-
-    const startsAt = new Date(event.start.dateTime);
-    const endsAt = event.end?.dateTime ? new Date(event.end.dateTime) : null;
-    const validStart = Number.isNaN(startsAt.getTime()) ? null : startsAt;
-    const validEnd = endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null;
-
+    const info = describeCalendarService(event, history);
+    if (!info) continue;
+    const { isCleaning, leadCity: _leadCity, ...rest } = info;
     const item: ReminderService = {
-      event,
+      ...rest,
       day: dateKey === todayKey ? 'hoje' : 'amanha',
-      dateKey,
-      clientName,
-      firstName: clientName.split(/\s+/)[0] || '',
-      phone,
-      address,
-      dateLabelEn: formatDateLabelEn(dateKey),
-      timeLabelEn: validStart ? formatTime(validStart, 'en-US') : '',
-      timeLabelPt: validStart ? formatTime(validStart, 'pt-BR') : '',
-      startsAt: validStart,
-      endsAt: validEnd,
-      matchedLeadId: lead?.id ?? null,
     };
-
-    if (looksLikeCleaningService(event, lead)) services.push(item);
+    if (isCleaning) services.push(item);
     else skipped.push(item);
   }
 
