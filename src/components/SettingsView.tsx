@@ -15,6 +15,7 @@ import {
 } from '../data/defaultPricing';
 import { HouseTier, PricingConfig } from '../types/pricing';
 import { formatOfficialCityName } from '../utils/cityFormatter';
+import { sanitizeReviewLink } from '../utils/storage';
 import {
   WEEKDAY_CHOICES,
   getTwoSuggestedDateOptions,
@@ -300,6 +301,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             ))}
           </div>
         )}
+      </section>
+
+      {/* Link do Google Reviews (fica só neste navegador, nunca no código) */}
+      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-3">
+        <div className="border-b border-slate-100 pb-3">
+          <h2 className="text-lg font-semibold text-slate-900">
+            Link do Google Reviews
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Usado no lembrete &ldquo;Pedir avaliação&rdquo; da Agenda. No
+            Google Business Profile, toque em &ldquo;Pedir avaliações&rdquo;,
+            copie o link e cole aqui. Depois clique em Salvar.
+          </p>
+        </div>
+        <input
+          id="googleReviewLinkInput"
+          type="url"
+          inputMode="url"
+          autoComplete="off"
+          value={draft.googleReviewLink}
+          onChange={(e) =>
+            setDraft((prev) => ({ ...prev, googleReviewLink: e.target.value }))
+          }
+          placeholder="Cole aqui o link de avaliação do Google"
+          className="w-full h-11 sm:h-10 px-3 rounded-md border border-slate-300 text-base text-slate-900 bg-white"
+        />
+        {draft.googleReviewLink.trim() &&
+        !sanitizeReviewLink(draft.googleReviewLink) ? (
+          <p className="text-xs font-medium text-red-700">
+            Link inválido. Ele precisa começar com https://
+          </p>
+        ) : !draft.googleReviewLink.trim() ? (
+          <p className="text-xs text-slate-400">
+            Sem link cadastrado, o botão de pedir avaliação fica bloqueado.
+          </p>
+        ) : null}
       </section>
 
       {/* Fatos da empresa (fonte única da IA) */}

@@ -181,6 +181,19 @@ function isValidBasePricingShape(candidate: unknown): candidate is Record<string
   return true;
 }
 
+/** Aceita só links http(s); qualquer outra coisa vira vazio. */
+export function sanitizeReviewLink(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? trimmed : '';
+  } catch {
+    return '';
+  }
+}
+
 export function upgradePricingConfig(candidate: unknown): PricingConfig | null {
   if (!isValidBasePricingShape(candidate)) return null;
 
@@ -258,6 +271,7 @@ export function upgradePricingConfig(candidate: unknown): PricingConfig | null {
           )
         )
       : [],
+    googleReviewLink: sanitizeReviewLink(candidate.googleReviewLink),
   };
 }
 
@@ -860,6 +874,7 @@ export function clearAllSavedAppStorage(): void {
     HISTORY_STORAGE_KEY,
     HELPERS_STORAGE_KEY,
     LAST_BACKUP_STORAGE_KEY,
+    'dany_clean_pro_reminders_sent_v1',
     MIGRATABLE_PRICING_STORAGE_KEY_V3,
     MIGRATABLE_HISTORY_STORAGE_KEY_V3,
     ...LEGACY_PRICING_STORAGE_KEYS,

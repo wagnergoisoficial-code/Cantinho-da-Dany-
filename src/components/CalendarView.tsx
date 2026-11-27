@@ -21,6 +21,8 @@ import {
 import { DEFAULT_GOOGLE_CALENDAR_EMAIL } from '../utils/googleCalendarAuth';
 import { formatDateBr, getLocalDateString } from '../utils/negotiationEngine';
 import { GoogleSignInButton } from './GoogleSignInButton';
+import { ClientRemindersPanel } from './ClientRemindersPanel';
+import { LeadQuoteRecord } from '../types/pricing';
 
 interface CalendarViewProps {
   connected: boolean;
@@ -37,6 +39,9 @@ interface CalendarViewProps {
   onRefresh: () => void;
   onCreateEvent: (input: CreateCalendarEventInput) => Promise<void>;
   onDeleteEvent: (eventId: string) => Promise<void>;
+  history: LeadQuoteRecord[];
+  googleReviewLink: string;
+  onOpenSettings: () => void;
 }
 
 type PendingAction =
@@ -67,6 +72,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   onRefresh,
   onCreateEvent,
   onDeleteEvent,
+  history,
+  googleReviewLink,
+  onOpenSettings,
 }) => {
   const [summary, setSummary] = useState('');
   const [date, setDate] = useState(() => getLocalDateString());
@@ -164,6 +172,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               ) para consultar seus horários reais, ver quantas limpezas já estão
               marcadas em cada dia e agendar novos clientes direto do aplicativo.
             </p>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              Depois de conectar, aparecem aqui os{' '}
+              <strong className="text-slate-800">lembretes de hoje e amanhã</strong>{' '}
+              para enviar ao cliente: confirmação, &ldquo;estamos a caminho&rdquo; e
+              pedido de avaliação.
+            </p>
           </div>
         </div>
 
@@ -259,6 +273,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           <span>{successMsg}</span>
         </div>
       )}
+
+      <ClientRemindersPanel
+        events={events}
+        history={history}
+        googleReviewLink={googleReviewLink}
+        isLoading={isLoading}
+        onOpenSettings={onOpenSettings}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">
         {/* Lista de compromissos próximos */}

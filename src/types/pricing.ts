@@ -205,6 +205,8 @@ export interface PricingConfig {
   servedCities: string[];
   /** Números de WhatsApp da equipe (digitados em Ajustes, nunca no código). */
   teamWhatsAppNumbers: string[];
+  /** Link de avaliação do Google (digitado em Ajustes, nunca no código). */
+  googleReviewLink: string;
   companyFacts: string;
   extras: ExtrasPricing;
   visitaAvulsa: VisitaAvulsaPricing;

@@ -156,6 +156,7 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   serviceMaxRadiusMiles: 35,
   servedCities: ['Stamford', 'Norwalk'],
   teamWhatsAppNumbers: [],
+  googleReviewLink: '',
   companyFacts: DEFAULT_COMPANY_FACTS,
   extras: {
     forno: 35,
