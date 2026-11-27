@@ -54,6 +54,7 @@ import {
   savePotentialHelpers,
   savePricingConfig,
   saveQuoteHistory,
+  sanitizeReviewLink,
 } from './utils/storage';
 import {
   formatOfficialCityName,
@@ -1508,6 +1509,9 @@ export default function App() {
               onRefresh={handleRefreshCalendar}
               onCreateEvent={handleCreateCalendarEvent}
               onDeleteEvent={handleDeleteCalendarEvent}
+              history={history}
+              googleReviewLink={sanitizeReviewLink(config.googleReviewLink)}
+              onOpenSettings={() => setActiveTab('configuracoes')}
             />
           </ErrorBoundary>
         )}
