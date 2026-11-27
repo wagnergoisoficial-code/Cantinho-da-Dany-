@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Download } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Download } from 'lucide-react';
 import {
   INITIAL_LEAD_STATE,
   SERVICE_TYPE_LABELS,
@@ -10,6 +10,7 @@ import { DashboardAndHistoryView } from './components/DashboardAndHistoryView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LeadInputLayer } from './components/LeadInputLayer';
 import { LeadMessageParserBox } from './components/LeadMessageParserBox';
+import { QuickQuoteCard } from './components/QuickQuoteCard';
 import { MessageAndHistoryLayer } from './components/MessageAndHistoryLayer';
 import { NegotiationView } from './components/NegotiationView';
 import { PhotoAnalysisLayer } from './components/PhotoAnalysisLayer';
@@ -139,6 +140,7 @@ export default function App() {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const [leadPasteText, setLeadPasteText] = useState('');
+  const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [isParsingLead, setIsParsingLead] = useState(false);
   const [parseLeadError, setParseLeadError] = useState<string | null>(null);
   const [parseLeadSummary, setParseLeadSummary] = useState<string | null>(null);
@@ -1311,6 +1313,48 @@ export default function App() {
                 }}
               />
 
+              <QuickQuoteCard
+                input={input}
+                calc={calc}
+                finalPrimaryPrice={finalPrimaryPrice}
+                finalRecurringPrice={finalRecurringPrice}
+                deepCleanRangeMarginPercent={config.deepCleanRangeMarginPercent}
+                servedCities={config.servedCities}
+                cityFixedDays={config.cityFixedDays}
+                onChangeInput={(updater) => {
+                  setInput(updater);
+                  setJustSaved(false);
+                }}
+                onSaveToHistory={handleSaveToHistory}
+                justSaved={justSaved}
+                saveError={saveError}
+              />
+
+              <button
+                type="button"
+                onClick={() => setShowMoreDetails((v) => !v)}
+                aria-expanded={showMoreDetails}
+                aria-controls="maisDetalhes"
+                className="w-full flex items-center justify-between gap-3 h-12 px-4 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors"
+              >
+                <span>
+                  Mais detalhes
+                  <span className="ml-2 text-xs font-normal text-slate-500">
+                    campos, preço, fotos e datas
+                  </span>
+                </span>
+                <ChevronDown
+                  className={`w-5 h-5 text-slate-500 transition-transform ${
+                    showMoreDetails ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+              <div
+                id="maisDetalhes"
+                hidden={!showMoreDetails}
+                className="space-y-4 sm:space-y-6"
+              >
               <LeadInputLayer
                 input={input}
                 config={config}
@@ -1403,6 +1447,7 @@ export default function App() {
                 justSaved={justSaved}
                 saveError={saveError}
               />
+              </div>
             </div>
           </ErrorBoundary>
         )}
