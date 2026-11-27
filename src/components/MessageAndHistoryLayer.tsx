@@ -11,18 +11,14 @@ import {
   LeadInputState,
   PriceCalculationResult,
 } from '../types/pricing';
-import { buildQuoteMessages, countWords } from '../utils/messageBuilder';
+import { copyTextToClipboard, useQuoteMessage } from '../hooks/useQuoteMessage';
 import { formatOfficialCityName } from '../utils/cityFormatter';
 import {
   WEEKDAY_CHOICES,
   normalizeWeekdayName,
   resolveDateOptionsForCity,
 } from '../utils/dateOptions';
-import {
-  checkNameMismatch,
-  validateNegotiationCompliance,
-  validatePortugueseCompliance,
-} from '../utils/negotiationEngine';
+import { checkNameMismatch } from '../utils/negotiationEngine';
 import { CalendarAvailabilityResult } from '../utils/googleCalendarApi';
 import { VISITA_AVULSA_LABELS } from '../data/defaultPricing';
 
@@ -62,41 +58,25 @@ export const MessageAndHistoryLayer: React.FC<MessageAndHistoryLayerProps> = ({
   const [copied, setCopied] = useState(false);
   const [previewLang, setPreviewLang] = useState<'en' | 'pt'>('en');
 
-  const missingName = !input.clientName.trim();
-  const missingOrigin = !input.origin;
-  const missingCity = !input.city.trim();
-
-  const { english, portuguese } = buildQuoteMessages(
+  const {
+    calendarVerified,
+    english,
+    portuguese,
+    wordCount,
+    allViolations,
+    missingName,
+    missingFieldAlerts,
+    copyBlocked,
+  } = useQuoteMessage({
     input,
     calc,
     finalPrimaryPrice,
     finalRecurringPrice,
     deepCleanRangeMarginPercent,
     servedCities,
-    new Date(),
     cityFixedDays,
-    calendarAvailability
-  );
-
-  const calendarVerified = Boolean(calendarAvailability?.verifiedAvailable);
-  const wordCount = countWords(english);
-  const compliance = validateNegotiationCompliance(english, {
-    calendarVerified,
+    calendarAvailability,
   });
-  const ptIssues = validatePortugueseCompliance(portuguese, {
-    calendarVerified,
-  });
-  const allViolations = Array.from(
-    new Set([...compliance.violations, ...ptIssues])
-  );
-
-  const copyBlocked =
-    missingName || missingOrigin || missingCity || allViolations.length > 0;
-
-  const missingFieldAlerts: string[] = [];
-  if (missingName) missingFieldAlerts.push('Preencha o nome');
-  if (missingOrigin) missingFieldAlerts.push('Preencha a origem');
-  if (missingCity) missingFieldAlerts.push('Preencha a cidade');
 
   const resolvedCityDates = resolveDateOptionsForCity(
     input.city,
@@ -119,20 +99,9 @@ export const MessageAndHistoryLayer: React.FC<MessageAndHistoryLayerProps> = ({
 
   const handleCopy = async () => {
     if (copyBlocked) return;
-    try {
-      await navigator.clipboard.writeText(english);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2200);
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = english;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2200);
-    }
+    await copyTextToClipboard(english);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2200);
   };
 
   return (

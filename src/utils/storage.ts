@@ -205,6 +205,19 @@ export function sanitizeCompanyFacts(rawFacts: unknown): string {
   return cleaned || DEFAULT_COMPANY_FACTS;
 }
 
+/** Aceita só links http(s); qualquer outra coisa vira vazio. */
+export function sanitizeReviewLink(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? trimmed : '';
+  } catch {
+    return '';
+  }
+}
+
 export function upgradePricingConfig(candidate: unknown): PricingConfig | null {
   if (!isValidBasePricingShape(candidate)) return null;
 
@@ -281,6 +294,21 @@ export function upgradePricingConfig(candidate: unknown): PricingConfig | null {
       typeof candidate.updatedByEmail === 'string'
         ? candidate.updatedByEmail
         : undefined,
+    teamWhatsAppNumbers: Array.isArray(candidate.teamWhatsAppNumbers)
+      ? Array.from(
+          new Set(
+            candidate.teamWhatsAppNumbers
+              .filter((n): n is string => typeof n === 'string')
+              .map((n) => n.trim())
+              .filter((n) => n.replace(/\D/g, '').length >= 10)
+          )
+        )
+      : [],
+    googleReviewLink: sanitizeReviewLink(candidate.googleReviewLink),
+    homeStartAddress:
+      typeof candidate.homeStartAddress === 'string'
+        ? candidate.homeStartAddress.trim().slice(0, 200)
+        : '',
   };
 }
 
@@ -794,6 +822,23 @@ export function sanitizeHelpersList(rawList: unknown): PotentialHelperRecord[] {
       updatedAt: typeof h.updatedAt === 'string' ? h.updatedAt : undefined,
       updatedByEmail:
         typeof h.updatedByEmail === 'string' ? h.updatedByEmail : undefined,
+      isTeam: h.isTeam === true,
+      serviceCities: Array.isArray(h.serviceCities)
+        ? h.serviceCities
+            .filter((c): c is string => typeof c === 'string')
+            .map((c) => c.trim())
+            .filter(Boolean)
+            .slice(0, 30)
+        : [],
+      availableWeekdays: Array.isArray(h.availableWeekdays)
+        ? Array.from(
+            new Set(
+              h.availableWeekdays.filter(
+                (d): d is number => Number.isInteger(d) && d >= 0 && d <= 6
+              )
+            )
+          ).sort()
+        : [],
     }));
 }
 
@@ -979,6 +1024,7 @@ export function clearAllSavedAppStorage(): void {
     HISTORY_STORAGE_KEY,
     HELPERS_STORAGE_KEY,
     LAST_BACKUP_STORAGE_KEY,
+    'dany_clean_pro_reminders_sent_v1',
     MIGRATABLE_PRICING_STORAGE_KEY_V3,
     MIGRATABLE_HISTORY_STORAGE_KEY_V3,
     ...LEGACY_PRICING_STORAGE_KEYS,

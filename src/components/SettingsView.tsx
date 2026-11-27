@@ -15,6 +15,7 @@ import {
 } from '../data/defaultPricing';
 import { HouseTier, PricingConfig } from '../types/pricing';
 import { formatOfficialCityName } from '../utils/cityFormatter';
+import { sanitizeReviewLink } from '../utils/storage';
 import {
   WEEKDAY_CHOICES,
   getTwoSuggestedDateOptions,
@@ -45,6 +46,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [newServedCity, setNewServedCity] = useState('');
+  const [newTeamNumber, setNewTeamNumber] = useState('');
+
+  const addTeamNumbers = () => {
+    const incoming = newTeamNumber
+      .split(/[,;\n]+/)
+      .map((part) => part.trim())
+      .filter((part) => part.replace(/\D/g, '').length >= 10);
+    if (incoming.length === 0) return;
+    setDraft((prev) => {
+      const seen = new Set(
+        prev.teamWhatsAppNumbers.map((n) => n.replace(/\D/g, ''))
+      );
+      const merged = [...prev.teamWhatsAppNumbers];
+      for (const num of incoming) {
+        const key = num.replace(/\D/g, '');
+        if (!seen.has(key)) {
+          seen.add(key);
+          merged.push(num);
+        }
+      }
+      return { ...prev, teamWhatsAppNumbers: merged };
+    });
+    setNewTeamNumber('');
+  };
   const [newFixedCity, setNewFixedCity] = useState('');
   const [newFixedWeekday, setNewFixedWeekday] = useState('Thursday');
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -202,6 +227,145 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs font-medium text-red-700">
             {backupError}
           </div>
+        )}
+      </section>
+
+      {/* WhatsApp da equipe (números ficam só neste navegador, nunca no código) */}
+      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-3">
+        <div className="border-b border-slate-100 pb-3">
+          <h2 className="text-lg font-semibold text-slate-900">
+            WhatsApp da equipe
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Números que aparecem no botão &ldquo;Enviar para a equipe&rdquo; do
+            orçamento. Use o formato com código do país, por exemplo +1 203
+            555 0100. Depois de adicionar, clique em Salvar.
+          </p>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            id="teamWhatsAppInput"
+            type="tel"
+            inputMode="tel"
+            value={newTeamNumber}
+            onChange={(e) => setNewTeamNumber(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addTeamNumbers();
+              }
+            }}
+            placeholder="+1 203 555 0100"
+            className="flex-1 h-11 sm:h-10 px-3 rounded-md border border-slate-300 text-base text-slate-900 bg-white"
+          />
+          <button
+            type="button"
+            onClick={addTeamNumbers}
+            className="inline-flex items-center justify-center gap-1.5 h-11 sm:h-10 px-3.5 rounded-md bg-[#0B6273] text-white text-sm font-medium hover:bg-[#084E5C] transition-colors shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Adicionar número</span>
+          </button>
+        </div>
+
+        {draft.teamWhatsAppNumbers.length === 0 ? (
+          <p className="text-xs text-slate-400">
+            Nenhum número cadastrado. O botão &ldquo;Enviar para a equipe&rdquo;
+            só aparece depois de adicionar pelo menos um.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {draft.teamWhatsAppNumbers.map((num) => (
+              <span
+                key={num}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-300 bg-slate-50 text-xs font-medium text-slate-800"
+              >
+                <span>{num}</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      teamWhatsAppNumbers: prev.teamWhatsAppNumbers.filter(
+                        (item) => item !== num
+                      ),
+                    }))
+                  }
+                  aria-label={`Remover ${num}`}
+                  className="text-slate-400 hover:text-red-600 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Link do Google Reviews (fica só neste navegador, nunca no código) */}
+      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-3">
+        <div className="border-b border-slate-100 pb-3">
+          <h2 className="text-lg font-semibold text-slate-900">
+            Link do Google Reviews
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Usado no lembrete &ldquo;Pedir avaliação&rdquo; da Agenda. No
+            Google Business Profile, toque em &ldquo;Pedir avaliações&rdquo;,
+            copie o link e cole aqui. Depois clique em Salvar.
+          </p>
+        </div>
+        <input
+          id="googleReviewLinkInput"
+          type="url"
+          inputMode="url"
+          autoComplete="off"
+          value={draft.googleReviewLink}
+          onChange={(e) =>
+            setDraft((prev) => ({ ...prev, googleReviewLink: e.target.value }))
+          }
+          placeholder="Cole aqui o link de avaliação do Google"
+          className="w-full h-11 sm:h-10 px-3 rounded-md border border-slate-300 text-base text-slate-900 bg-white"
+        />
+        {draft.googleReviewLink.trim() &&
+        !sanitizeReviewLink(draft.googleReviewLink) ? (
+          <p className="text-xs font-medium text-red-700">
+            Link inválido. Ele precisa começar com https://
+          </p>
+        ) : !draft.googleReviewLink.trim() ? (
+          <p className="text-xs text-slate-400">
+            Sem link cadastrado, o botão de pedir avaliação fica bloqueado.
+          </p>
+        ) : null}
+      </section>
+
+      {/* Endereço de partida (fica só neste aparelho, nunca no código) */}
+      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-3">
+        <div className="border-b border-slate-100 pb-3">
+          <h2 className="text-lg font-semibold text-slate-900">
+            Endereço de partida (casa)
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Usado na Agenda inteligente para mostrar quantas milhas e minutos de
+            carro você leva da sua casa até o novo cliente. Fica salvo só neste
+            aparelho. Depois clique em Salvar.
+          </p>
+        </div>
+        <input
+          id="homeStartAddressInput"
+          type="text"
+          autoComplete="street-address"
+          value={draft.homeStartAddress}
+          onChange={(e) =>
+            setDraft((prev) => ({ ...prev, homeStartAddress: e.target.value }))
+          }
+          placeholder="Rua, número, cidade, CT e ZIP code"
+          className="w-full h-11 sm:h-10 px-3 rounded-md border border-slate-300 text-base text-slate-900 bg-white"
+        />
+        {!draft.homeStartAddress.trim() && (
+          <p className="text-xs text-slate-400">
+            Sem endereço, a agenda mostra só a distância até os serviços do dia.
+          </p>
         )}
       </section>
 

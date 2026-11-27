@@ -11,6 +11,7 @@ import {
   BarChart3,
   Calculator,
   Calendar,
+  ChevronDown,
   Download,
   LogOut,
   MessageSquare,
@@ -29,7 +30,9 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { LeadInputLayer } from './components/LeadInputLayer';
 import { LeadMessageParserBox } from './components/LeadMessageParserBox';
 import { MessageAndHistoryLayer } from './components/MessageAndHistoryLayer';
-import { NegotiationView } from './components/NegotiationView';
+import { NegotiationSubTab, NegotiationView } from './components/NegotiationView';
+import { QuickQuoteCard } from './components/QuickQuoteCard';
+import { SmartScheduleSuggestions } from './components/SmartScheduleSuggestions';
 import { PhotoAnalysisLayer } from './components/PhotoAnalysisLayer';
 import { PricingEngineLayer } from './components/PricingEngineLayer';
 import { SettingsView } from './components/SettingsView';
@@ -70,6 +73,7 @@ import {
   savePotentialHelpers,
   savePricingConfig,
   saveQuoteHistory,
+  sanitizeReviewLink,
 } from './utils/storage';
 import {
   formatOfficialCityName,
@@ -136,6 +140,15 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('calculadora');
+  // Aba que a Negociação abre: 'ajudantes' quando vem do botão da Agenda.
+  const [negotiationStartTab, setNegotiationStartTab] =
+    useState<NegotiationSubTab>('hoje');
+  useEffect(() => {
+    if (activeTab === 'negociacao' && negotiationStartTab !== 'hoje') {
+      setNegotiationStartTab('hoje');
+    }
+  }, [activeTab, negotiationStartTab]);
+  const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [config, setConfig] = useState<PricingConfig>(() => loadPricingConfig());
   const [history, setHistory] = useState<LeadQuoteRecord[]>(() =>
     loadQuoteHistory()
@@ -293,8 +306,18 @@ export default function App() {
       unsubscribeWorkspace = subscribeWorkspaceData({
         onPricing: (remoteConfig) => {
           if (!active) return;
-          setConfig(remoteConfig);
-          savePricingConfig(remoteConfig);
+          // WhatsApp da equipe, link de avaliação e endereço de saída ainda
+          // não vão para a nuvem: ficam salvos neste aparelho.
+          setConfig((prev) => {
+            const merged: PricingConfig = {
+              ...remoteConfig,
+              teamWhatsAppNumbers: prev.teamWhatsAppNumbers,
+              googleReviewLink: prev.googleReviewLink,
+              homeStartAddress: prev.homeStartAddress,
+            };
+            savePricingConfig(merged);
+            return merged;
+          });
         },
         onLeads: (remoteLeads, meta) => {
           if (!active) return;
@@ -326,8 +349,23 @@ export default function App() {
               pendingLocalIds: pendingHelperIdsRef.current,
             }
           );
-          setHelpers(reconciled.helpers);
-          savePotentialHelpers(reconciled.helpers);
+          // Equipe, cidades e dias de cada ajudante ficam salvos neste aparelho.
+          const localById = new Map(
+            helpersRef.current.map((h) => [h.id, h] as const)
+          );
+          const withLocalTeamData = reconciled.helpers.map((h) => {
+            const local = localById.get(h.id);
+            return local
+              ? {
+                  ...h,
+                  isTeam: local.isTeam,
+                  serviceCities: local.serviceCities,
+                  availableWeekdays: local.availableWeekdays,
+                }
+              : h;
+          });
+          setHelpers(withLocalTeamData);
+          savePotentialHelpers(withLocalTeamData);
         },
         onSyncMeta: (meta) => {
           if (!active || !meta.lastBackupAt) return;
@@ -1421,30 +1459,58 @@ export default function App() {
       });
   };
 
-  const handleUpdateHelperNotes = (id: string, notes: string) => {
-    const target = helpers.find((h) => h.id === id);
-    if (!target) return;
-    const updatedHelper: PotentialHelperRecord = {
-      ...target,
-      notes,
-      updatedAt: new Date().toISOString(),
-    };
-    const docId = normalizeDocId(updatedHelper.id);
+  const syncHelperToCloud = (helper: PotentialHelperRecord, failMessage: string) => {
+    const docId = normalizeDocId(helper.id);
     pendingHelperIdsRef.current.add(docId);
-    setHelpers((prev) =>
-      prev.map((h) => (h.id === id ? updatedHelper : h))
-    );
-    void upsertHelperToFirestore(updatedHelper)
+    void upsertHelperToFirestore(helper)
       .then(() => {
         pendingHelperIdsRef.current.delete(docId);
         setSyncError(null);
       })
       .catch((err) => {
-        console.error('Erro ao atualizar notas de ajudante no Firestore:', err);
-        setSyncError(
-          'Não foi possível sincronizar as notas na nuvem agora. Seus dados locais foram preservados.'
-        );
+        console.error('Erro ao sincronizar ajudante no Firestore:', err);
+        setSyncError(failMessage);
       });
+  };
+
+  const handleAddHelper = (helper: PotentialHelperRecord) => {
+    const nowIso = new Date().toISOString();
+    const newHelper: PotentialHelperRecord = {
+      ...helper,
+      savedAt: helper.savedAt || nowIso,
+      updatedAt: nowIso,
+    };
+    setHelpers((prev) => [newHelper, ...prev]);
+    syncHelperToCloud(
+      newHelper,
+      'Não foi possível sincronizar o contato na nuvem agora. Ele foi mantido localmente.'
+    );
+  };
+
+  const handleUpdateHelper = (
+    id: string,
+    patch: Partial<PotentialHelperRecord>
+  ) => {
+    const target = helpers.find((h) => h.id === id);
+    if (!target) return;
+    const updatedHelper: PotentialHelperRecord = {
+      ...target,
+      ...patch,
+      id: target.id,
+      updatedAt: new Date().toISOString(),
+    };
+    setHelpers((prev) =>
+      prev.map((h) => (h.id === id ? updatedHelper : h))
+    );
+    syncHelperToCloud(
+      updatedHelper,
+      'Não foi possível sincronizar o ajudante na nuvem agora. Seus dados locais foram preservados.'
+    );
+  };
+
+  const handleOpenHelpers = () => {
+    setNegotiationStartTab('ajudantes');
+    setActiveTab('negociacao');
   };
 
   const handleDeleteHelper = (id: string) => {
@@ -1765,7 +1831,61 @@ export default function App() {
             scopeLabel="a Calculadora"
             onResetScope={() => setActiveTab('calculadora')}
           >
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 sm:gap-6 items-start">
+            <div className="space-y-5 sm:space-y-6">
+            <QuickQuoteCard
+              input={input}
+              calc={calc}
+              finalPrimaryPrice={finalPrimaryPrice}
+              finalRecurringPrice={finalRecurringPrice}
+              deepCleanRangeMarginPercent={config.deepCleanRangeMarginPercent}
+              servedCities={config.servedCities}
+              cityFixedDays={config.cityFixedDays}
+              onChangeInput={(updater) => {
+                setInput(updater);
+                setJustSaved(false);
+              }}
+              onSaveToHistory={handleSaveToHistory}
+              justSaved={justSaved}
+              saveError={saveError}
+              teamWhatsAppNumbers={config.teamWhatsAppNumbers}
+            />
+
+            <SmartScheduleSuggestions
+              leadCity={input.city}
+              leadZip={input.zipCode}
+              leadStreetAddress={input.streetAddress}
+              cityFixedDays={config.cityFixedDays}
+              defaultDay1={input.dayOption1 || config.defaultDayOption1}
+              defaultDay2={input.dayOption2 || config.defaultDayOption2}
+              calendarIntegration={calendarIntegration}
+              homeStartAddress={config.homeStartAddress}
+            />
+
+            <button
+              type="button"
+              onClick={() => setShowMoreDetails((v) => !v)}
+              aria-expanded={showMoreDetails}
+              aria-controls="maisDetalhes"
+              className="w-full flex items-center justify-between gap-3 h-12 px-4 rounded-2xl border border-slate-200/90 bg-white text-sm font-semibold text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-slate-50 transition-colors"
+            >
+              <span>
+                Mais detalhes
+                <span className="ml-2 text-xs font-normal text-slate-500">
+                  campos, preço, fotos e datas
+                </span>
+              </span>
+              <ChevronDown
+                className={`w-5 h-5 text-slate-500 transition-transform ${
+                  showMoreDetails ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+
+            <div
+              id="maisDetalhes"
+              hidden={!showMoreDetails}
+              className="grid grid-cols-1 xl:grid-cols-12 gap-5 sm:gap-6 items-start"
+            >
               {/* Coluna esquerda: entrada de dados e análise de fotos */}
               <div className="xl:col-span-7 space-y-5 sm:space-y-6 min-w-0">
                 <LeadMessageParserBox
@@ -1885,6 +2005,7 @@ export default function App() {
                 />
               </div>
             </div>
+            </div>
           </ErrorBoundary>
         )}
 
@@ -1904,8 +2025,10 @@ export default function App() {
               onCreateQuickLead={handleCreateQuickLead}
               onDeleteLead={handleDeleteRecord}
               onSavePotentialHelper={handleSavePotentialHelper}
-              onUpdateHelperNotes={handleUpdateHelperNotes}
+              onAddHelper={handleAddHelper}
+              onUpdateHelper={handleUpdateHelper}
               onDeleteHelper={handleDeleteHelper}
+              initialSubTab={negotiationStartTab}
               onGoToCalculator={() => setActiveTab('calculadora')}
               calendarIntegration={calendarIntegration}
             />
@@ -1933,6 +2056,11 @@ export default function App() {
               onRefresh={handleRefreshCalendar}
               onCreateEvent={handleCreateCalendarEvent}
               onDeleteEvent={handleDeleteCalendarEvent}
+              history={history}
+              googleReviewLink={sanitizeReviewLink(config.googleReviewLink)}
+              onOpenSettings={() => setActiveTab('configuracoes')}
+              helpers={helpers}
+              onOpenHelpers={handleOpenHelpers}
             />
           </ErrorBoundary>
         )}

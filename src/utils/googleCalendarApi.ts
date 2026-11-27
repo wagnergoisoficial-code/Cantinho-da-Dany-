@@ -1,3 +1,8 @@
+import {
+  friendlyCalendarApiError,
+  friendlyNetworkError,
+} from './googleCalendarErrors';
+
 export interface GoogleCalendarListItem {
   id: string;
   summary: string;
@@ -52,7 +57,7 @@ export interface CalendarWorkspaceBridge {
 
 export class GoogleCalendarAuthExpiredError extends Error {
   constructor() {
-    super('Sessão do Google Calendar expirada. Conecte novamente para continuar.');
+    super('Sua conexão com a agenda expirou. Toque em Conectar para renovar (não pede permissões de novo).');
     this.name = 'GoogleCalendarAuthExpiredError';
   }
 }
@@ -96,9 +101,7 @@ async function calendarFetch<T>(
       },
     });
   } catch {
-    throw new Error(
-      'Sem conexão com o Google Calendar no momento. Verifique sua internet e clique em Atualizar.'
-    );
+    throw friendlyNetworkError();
   }
 
   if (response.status === 401) {
@@ -154,10 +157,8 @@ async function calendarFetch<T>(
   }
 
   if (!response.ok) {
-    throw new Error(
-      data?.error?.message ||
-        `Erro ao comunicar com o Google Calendar (HTTP ${response.status}).`
-    );
+    console.error('Google Calendar API error:', response.status, data);
+    throw friendlyCalendarApiError(response.status, data);
   }
 
   return data as T;
