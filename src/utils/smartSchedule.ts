@@ -216,6 +216,8 @@ export interface SmartDateSuggestion {
   distanceMiles: number | null;
   /** Cidade do serviço vizinho. */
   nearCity: string | null;
+  /** Texto do "Local" do serviço vizinho (para calcular rota no Maps). */
+  nearAddress: string | null;
   /** Mesmo nome de cidade e sem CEP para diferenciar. */
   sameCity: boolean;
   /** Eventos já marcados no dia. */
@@ -313,7 +315,12 @@ export function buildSmartScheduleSuggestions(params: {
     const info = dayInfo(key);
     if (info.list.length === 0) continue;
 
-    let best: { miles: number; city: string; sameCity: boolean } | null = null;
+    let best: {
+      miles: number;
+      city: string;
+      sameCity: boolean;
+      address: string;
+    } | null = null;
     for (const evt of info.list) {
       if (isDayOffEvent(evt)) continue;
       const place =
@@ -329,7 +336,12 @@ export function buildSmartScheduleSuggestions(params: {
         normalizeText(place.city) === normalizeText(leadPlace.city) &&
         (place.source === 'city' || leadPlace.source === 'city');
       if (!best || miles < best.miles) {
-        best = { miles, city: place.city, sameCity };
+        best = {
+          miles,
+          city: place.city,
+          sameCity,
+          address: (evt.location || '').trim() || place.city,
+        };
       }
     }
 
@@ -343,6 +355,7 @@ export function buildSmartScheduleSuggestions(params: {
       en: formatDateOptionEn(date),
       distanceMiles: Math.round(best.miles * 10) / 10,
       nearCity: best.city,
+      nearAddress: best.address,
       sameCity: best.sameCity,
       eventsCount: info.list.length,
       tier:
@@ -373,6 +386,7 @@ export function buildSmartScheduleSuggestions(params: {
       en: opt.en,
       distanceMiles: null,
       nearCity: null,
+      nearAddress: null,
       sameCity: false,
       eventsCount: info.list.length,
       tier: 'sem-vizinho',

@@ -272,6 +272,10 @@ export function upgradePricingConfig(candidate: unknown): PricingConfig | null {
         )
       : [],
     googleReviewLink: sanitizeReviewLink(candidate.googleReviewLink),
+    homeStartAddress:
+      typeof candidate.homeStartAddress === 'string'
+        ? candidate.homeStartAddress.trim().slice(0, 200)
+        : '',
   };
 }
 

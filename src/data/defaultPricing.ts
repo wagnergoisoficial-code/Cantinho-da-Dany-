@@ -157,6 +157,7 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   servedCities: ['Stamford', 'Norwalk'],
   teamWhatsAppNumbers: [],
   googleReviewLink: '',
+  homeStartAddress: '',
   companyFacts: DEFAULT_COMPANY_FACTS,
   extras: {
     forno: 35,

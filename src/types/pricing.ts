@@ -213,6 +213,11 @@ export interface PricingConfig {
   teamWhatsAppNumbers: string[];
   /** Link de avaliação do Google (digitado em Ajustes, nunca no código). */
   googleReviewLink: string;
+  /**
+   * Endereço de partida (casa) para calcular o tempo de carro até o novo
+   * cliente. Digitado em Ajustes e salvo só no aparelho, nunca no código.
+   */
+  homeStartAddress: string;
   companyFacts: string;
   extras: ExtrasPricing;
   visitaAvulsa: VisitaAvulsaPricing;

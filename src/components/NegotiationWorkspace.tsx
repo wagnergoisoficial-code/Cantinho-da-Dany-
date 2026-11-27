@@ -829,6 +829,7 @@ export const NegotiationWorkspace: React.FC<NegotiationWorkspaceProps> = ({
               calendarIntegration={calendarIntegration}
               onPickDate={(dateKey) => setCalendarModalDateKey(dateKey)}
               hideConnectPrompt
+              homeStartAddress={config.homeStartAddress}
             />
 
             {calendarScheduledMsg && (
